@@ -3036,24 +3036,6 @@ class DockerBase(AppBase):
         else :
             self.criticalMsg("Terminated!","RUN")
 
-    def __find_dockerfile__(self):
-        arch = self.arch()
-        if arch == 'arm64':
-            arch = 'aarch64'
-        targetOS = re.sub(':','-',self.targetOS())
-        if os.path.exists('%s/%s-%s/Dockerfile' % (self.projectPath(),targetOS,arch)):
-            print('%s/%s-%s' % (self.projectPath(),targetOS,arch))
-            self.dockerPath('%s/%s-%s' % (self.projectPath(),targetOS,arch))
-        elif os.path.exists('%s/%s/Dockerfile' % (self.projectPath(),arch)):
-            self.dockerPath('%s/%s' % (self.projectPath(),arch))
-        elif  os.path.exists('%s/Dockerfile' % self.projectPath()) :
-            self.dockerPath(self.projectPath())
-        else :
-            self.dockerPath('')
-        if self.dockerPath() != '':
-            self.imagePath('%s/docker-image' % self.dockerPath())
-        return self.dockerPath() != ''
-
     def __findConfig__(self):
         pathToken = os.path.abspath(".").split("/")
         path = "/".join(pathToken)
@@ -3108,21 +3090,21 @@ class DockerBase(AppBase):
                     self.infoMsg("Docker Container: '%s' or '%s' missing!" % (self.dockerName(),'%s-test' % self.dockerName()), "NOT FOUND")
 
     def __prebuild__(self):
-        result = self.__find_dockerfile__()
-        if result:
-            self.safeMsg("Using docker path: %s" % self.dockerPath(), 'DOCKER PATH')
+        dockerPath = self.dockerPath()
+        if dockerPath!="":
+            self.safeMsg("Using docker path: %s" % dockerPath, 'DOCKER PATH')
             os.chdir(self.projectPath())
             img_path=self.imagePath()
-            result = self.__clean_target__(self.dockerPath())
+            result = self.__clean_target__(dockerPath)
 
-            if self.dockerPath() != self.projectPath():
+            if dockerPath != self.projectPath():
                 result, stdout = self.shell("rm -rf %s/*" % img_path, True )
                 result, stdout = self.shell("mkdir -p %s" % img_path )
                 if os.path.exists('%s/docker-image' % self.projectPath()):
-                    result, stdout = self.shell('cp -rP "%s/docker-image" "%s/"' % (self.projectPath(),self.dockerPath()))
-                if os.path.exists('%s/src' % self.dockerPath()):
-                    if os.listdir('%s/src' % self.dockerPath()):
-                        result, stdout = self.shell('cp -rP %s/src/* "%s/"' % (self.dockerPath(),img_path))
+                    result, stdout = self.shell('cp -rP "%s/docker-image" "%s/"' % (self.projectPath(),dockerPath))
+                if os.path.exists('%s/src' % dockerPath):
+                    if os.listdir('%s/src' % dockerPath):
+                        result, stdout = self.shell('cp -rP %s/src/* "%s/"' % (dockerPath,img_path))
             if not self.__check_npm__():
                 self.criticalMsg("npm is required", "NO NPM")
                 return False
@@ -3165,8 +3147,8 @@ class DockerBase(AppBase):
             usrlib = '%s/usr/lib' % img_path
             usrLocalBin = '%s/usr/local/lib' % img_path
             lib = '%s/lib' % img_path
-            srcUsrlib = '%s/src/usr/lib' % self.dockerPath()
-            srcLib = '%s/src/lib' % self.dockerPath()
+            srcUsrlib = '%s/src/usr/lib' % dockerPath
+            srcLib = '%s/src/lib' % dockerPath
             if self.hasUsr():
                 self.__create_shortlink_so__(usrlib, srcUsrlib)
                 if os.path.exists(usrLocalBin):
@@ -3206,6 +3188,8 @@ class DockerBase(AppBase):
         elif self.sudo_test():
             cmd = "sudo docker container rm -f %s" % name
         if cmd != '':
+            self.cmd_history("# ** Remove Docker **")
+            self.cmd_history(cmd)
             result, stdout = self.shell(cmd, True)
             if stdout != '':
                 print(stdout)
@@ -3242,7 +3226,7 @@ class DockerBase(AppBase):
             overwritten = False
             if self.__container_exists__(dockerName):
                 self.safeMsg("Container: %s Found!" % dockerName , "EXISTS ALREADY")
-                if 'yes' == self.askYesNo('Do you want to overwrite container? (yes/no) '):
+                if 'yes' == self.__ask_yesno__('Do you want to overwrite container? (yes/no) '):
                     overwritten = True
             else :
                 overwritten = True
@@ -3316,7 +3300,20 @@ class DockerBase(AppBase):
             self.__dockerPath__=dockerPath
             return self
         elif not hasattr(self,'__dockerPath__'):
-            self.__dockerPath__=''
+            self.__dockerPath__=""
+            arch = self.arch()
+            if arch == 'arm64':
+                arch = 'aarch64'
+            targetOS = re.sub(':','-',self.targetOS())
+            if os.path.exists('%s/%s-%s/Dockerfile' % (self.projectPath(),targetOS,arch)):
+                print('%s/%s-%s' % (self.projectPath(),targetOS,arch))
+                self.__dockerPath__='%s/%s-%s' % (self.projectPath(),targetOS,arch)
+            elif os.path.exists('%s/%s/Dockerfile' % (self.projectPath(),arch)):
+                self.__dockerPath__='%s/%s' % (self.projectPath(),arch)
+            elif  os.path.exists('%s/Dockerfile' % self.projectPath()) :
+                self.__dockerPath__=self.projectPath()
+            if self.__dockerPath__ != '':
+                self.imagePath('%s/docker-image' % self.__dockerPath__)
         return self.__dockerPath__
 
     def exposedPort(self, exposedPort=None):
@@ -3604,6 +3601,16 @@ class DockerBase(AppBase):
                                 self.__remove_container__('%s-test' % self.dockerName())
                             else:
                                 self.__remove_container__(self.dockerName())
+                            self.cmd_history("# ** Remove temporary folder **")
+                            dockerPath=self.dockerPath()
+                            if dockerPath !="":
+                                self.cmd_history("rm -rf %s/docker-image" % dockerPath)
+                                self.removeFolder("%s/docker-image" % dockerPath)
+                                self.cmd_history("rm -rf %s/target" % dockerPath)
+                                self.removeFolder("%s/target" % dockerPath)
+                                self.cmd_history("rm -rf %s/repo" % dockerPath)
+                                self.removeFolder("%s/repo" % dockerPath)
+                            self.cmd_history_print()
                     return True
                 elif self.cmd() == 'restart':
                     result = self.__check_config__()
@@ -3632,5 +3639,5 @@ class DockerBase(AppBase):
 
 if __name__ == "__main__":
     app = DockerBase()
-    app.setInstallation(appName='d-master',author='Cloudgen Wong',homepage="https://github.com/cloudgen2/d-master",downloadUrl="https://dl.leolio.page/d-master",lastUpdate='2023-11-24',majorVersion=11,minorVersion=24)
+    app.setInstallation(appName='d-master',author='Cloudgen Wong',homepage="https://github.com/cloudgen2/d-master",downloadUrl="https://dl.leolio.page/d-master",lastUpdate='2023-11-24',majorVersion=11,minorVersion=26)
     app.start()
