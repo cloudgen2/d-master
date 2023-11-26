@@ -3636,6 +3636,8 @@ class DockerBase(AppBase):
                     return True
                 else:
                     self.criticalMsg("Unknown command '%s'" % self.cmd(), "UNKNOWN COMMAND")
+            else:
+                self.msg_info()
 
 if __name__ == "__main__":
     app = DockerBase()
