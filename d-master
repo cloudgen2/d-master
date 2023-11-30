@@ -363,6 +363,52 @@ class AppBase(object):
             self.__tterm__=''
         return self.__tterm__
 
+    def alpine_version(self):
+        if not hasattr(self,'__alpine_version__'):
+            if self.osVersion().startswith("Alpine"):
+                version=self.osVersion().split(' ')
+                length=len(version)
+                if length>1:
+                    self.__alpine_version__=version[length - 1]
+            else:
+                self.__alpine_version__=''
+        return self.__alpine_version__
+
+    def add_alpine_nginx_adm_sudoer(self, usr="nginx-adm"):
+        self.history_check_copy_sudoers()
+        if self.sudo_cmd() != "":
+            s_cmd = self.which_rc_service()
+            n_cmd = self.which_nginx()
+            lines = [
+                self.nopw(usr, "%s nginx reload" % s_cmd),
+                self.nopw(usr, "%s nginx restart" % s_cmd),
+                self.nopw(usr, "%s nginx start" % s_cmd),
+                self.nopw(usr, "%s nginx status" % s_cmd),
+                self.nopw(usr, "%s nginx stop" % s_cmd),
+                self.nopw(usr, n_cmd),
+                ""
+            ]
+            self.add_sudoers("1700-%s" % usr,'\n'.join(lines))
+        else:
+            self.msg_sudo_not_installed()
+        return False
+
+    def add_apk_community(self):
+        comm="https://dl-cdn.alpinelinux.org/alpine/%s/community" % self.alpine_version()
+        hasCommunity=False
+        self.cmd_history("# ** Check and update apk repositories **")
+        fin = self.open('/etc/apk/repositories', "rt", use_history=True)
+        for line in fin:
+            if 'https://dl-cdn.alpinelinux.org' in line and 'community' in line:
+                if '#' not in line:
+                    hasCommunity=True
+        fin.close()
+        if not hasCommunity:
+            with self.open('/etc/apk/repositories', "a") as file:
+                file.write("\n%s\n" % comm)
+            file.close()
+        return True
+
     def add_bashprofile_modification(self):
         # Append the modification lines to .bashrc file
         modification_lines = [
@@ -372,7 +418,7 @@ class AppBase(object):
         
         with self.open(self.bashprofile(), "a") as file:
             file.write("\n".join(modification_lines))
-        self.chmod_x(self.bashprofile())    
+        self.chmod_x(self.bashprofile())
 
     def add_bashrc_modification(self):
         # Append the modification lines to .bashrc file
@@ -384,6 +430,43 @@ class AppBase(object):
         with self.open(self.bashrc(), "a") as file:
             file.write("\n".join(modification_lines))
         self.chmod_x(self.bashrc())        
+
+    def add_nginx_adm_sudoer(self, usr="nginx-adm"):
+        self.history_check_copy_sudoers()
+        if self.sudo_cmd() != "":
+            s_cmd = self.which_systemctl()
+            j_cmd = self.which_journalctl()
+            n_cmd = self.which_nginx()
+            lines = [
+                self.nopw(usr, "%s -f -u nginx" % j_cmd),
+                self.nopw(usr, "%s -f -u nginx" %  j_cmd),
+                self.nopw(usr, "%s -u nginx" % j_cmd),
+                self.nopw(usr, "%s reload nginx" % s_cmd),
+                self.nopw(usr, "%s restart nginx" % s_cmd),
+                self.nopw(usr, "%s start nginx" % s_cmd),
+                self.nopw(usr, "%s status nginx" % s_cmd),
+                self.nopw(usr, "%s stop nginx" % s_cmd),
+                self.nopw(usr, n_cmd),
+                ""
+            ]
+            self.add_sudoers("1700-%s" % usr,'\n'.join(lines))
+            return True
+        else:
+            self.msg_sudo_not_installed()
+            return False
+
+    def add_sudoers(self, fname, content):
+        target_sudoers="/etc/sudoers.d/%s" % fname
+        if not self.pathexists(target_sudoers):
+            tempSudoer = "%s/%s-%s" % (self.tempFolder(),fname, self.timestamp())
+            file = self.open(tempSudoer,'w')
+            file.write(content)
+            file.close()
+            self.cp(tempSudoer, target_sudoers, useSudo=self.is_sudo())
+            self.history_remove_temp()
+            self.removeFile(tempSudoer)
+            return True
+        return True
 
     def add_zshenv_modification(self):
         # Append the modification lines to .bashrc file
@@ -446,15 +529,31 @@ class AppBase(object):
                     self.__app_exec__='./' + self.appName()
         return self.__app_exec__
 
+    def check_system_and_user(self):
+        # is_linux() Check if not windows and not macOS
+        if self.allowLinuxOnly() and not self.is_linux():
+            self.msg_linux_only()
+            return False
+        else:
+            # root_or_sudo() Check user is root or has sudo privilege
+            return self.root_or_sudo()
+
     def cmd_history(self,cmd=None):
+        if hasattr(self, "__tick__"):
+            self.__diff_time__ = (datetime.now() - self.__tick__).total_seconds()
+        else:
+            self.__start_time__= datetime.now()
+            self.__diff_time__= 0
+        self.__tick__=datetime.now()
         if not hasattr(self,'__cmd_history_id__'):
             self.__cmd_history_id__=1
         if not hasattr(self,'__cmd_history__'):
-            self.__cmd_history__=["# ====== Command History starting at %s: ======" % self.now()]
+            self.__cmd_history__=["# ====== Command History starting at %s: ======" % self.__tick__]
         if cmd is None:
             return self.__cmd_history__
         else:
             if cmd.startswith("# **"):
+                self.__cmd_history__.append("#    ...( %.3f second )" % self.__diff_time__)
                 self.__cmd_history__.append("# ** %d. %s" % (self.__cmd_history_id__, cmd[5:]))
                 self.__cmd_history_id__ = self.__cmd_history_id__ + 1
             else:
@@ -462,12 +561,22 @@ class AppBase(object):
         return self
 
     def cmd_history_print(self):
+        if hasattr(self, "__tick__"):
+            self.__diff_time__ = (datetime.now() - self.__tick__).total_seconds()
+        else:
+            self.__start_time__= datetime.now()
+            self.__diff_time__= 0
+        self.__cmd_history__.append("#    ...( %.3f second )" % self.__diff_time__)
         history = self.cmd_history()
+        if hasattr(self, "__start_time__"):
+            self.__diff_time__ = (datetime.now() - self.__start_time__).total_seconds()
+        else:
+            self.__diff_time__= 0
         if len(history) == 0:
             self.infoMsg("Command History: Not Available!", "COMMAND HISTORY")
         else:
             history_list = '\n  '.join(history)
-            self.infoMsg("%s\n  # ====== End at %s: ======\n" % ( history_list, self.now()), "COMMAND HISTORY")
+            self.infoMsg("%s\n  # ====== End at %s   ...( %.3f second ) ======\n" % ( history_list, str(self.__tick__),self.__diff_time__), "COMMAND HISTORY")
 
     def appPath(self, path=None):
         if path is not None:
@@ -723,23 +832,23 @@ class AppBase(object):
         if stdout=="":
             cmd = ""
             if home is None:                    
-                if self.osVersion().startswith('Alpine'):
+                if self.is_alpine():
                     if self.is_sudo():
                         cmd = "sudo adduser -D -G %s %s" % (group_id, username, username)
                     else:
                         cmd = "adduser -D -G %s %s" % (group_id, username, username)
-                elif self.osVersion().startswith('Debian') or self.osVersion().startswith('Ubuntu') or self.osVersion().startswith('CentOS'):
+                elif self.is_debian() or self.osVersion().startswith('CentOS'):
                     if self.is_sudo():
                         cmd = "sudo useradd -g %d -u %d -m -s /bin/bash %s" % (group_id, user_id, username)
                     else:
                         cmd = "useradd -g %d -u %d -m -s /bin/bash %s" % (group_id, user_id, username)
             else:
-                if self.osVersion().startswith('Alpine'):
+                if self.is_alpine():
                     if self.is_sudo():
                         cmd = "sudo adduser -D -G %s -h %s %s" % (username, home, username)
                     else:
                         cmd = "adduser -D -G %s -h %s %s" % (username, home, username)
-                elif self.osVersion().startswith('Debian') or self.osVersion().startswith('Ubuntu') or self.osVersion().startswith('CentOS'):
+                elif self.is_debian() or self.osVersion().startswith('CentOS'):
                     if self.is_sudo():
                         cmd = "sudo useradd -g %d -u %d -m -d %s -s /bin/bash %s" % (group_id, user_id, home, username)
                     else:
@@ -1083,7 +1192,7 @@ class AppBase(object):
                         self.history_package_exists(package)
                         return True
         if self.update_repository():
-            if self.osVersion().startswith('Ubuntu') or self.osVersion().startswith('Debian'):
+            if self.is_debian():
                 self.history_install_package(package)
                 if self.is_sudo():
                     cmd = "sudo apt install -y %s" % package
@@ -1092,7 +1201,7 @@ class AppBase(object):
                 self.cmd_history(cmd)
                 self.shell(cmd, ignoreErr=True)
                 installed = True
-            elif self.osVersion().startswith('Alpine'):
+            elif self.is_alpine():
                 self.history_install_package(package)
                 if self.is_sudo():
                     cmd = "sudo apk add %s" % package
@@ -1106,6 +1215,14 @@ class AppBase(object):
                     cmd = "sudo yum install -y %s" % package
                 else:
                     cmd = "yum install -y %s" % package
+                self.cmd_history(cmd)
+                self.shell(cmd, ignoreErr=True)
+                installed = True
+            elif self.is_fedora:
+                if self.is_sudo():
+                    cmd = "sudo dnf install -y %s" % package
+                else:
+                    cmd = "dnf install -y %s" % package
                 self.cmd_history(cmd)
                 self.shell(cmd, ignoreErr=True)
                 installed = True
@@ -1124,6 +1241,12 @@ class AppBase(object):
                     installed = False
         return installed
 
+    def install_python_package(self, package=None):
+        self.history_install_package('jupyter')
+        cmd = 'pip3 install --upgrade --break-system-packages %s' % package
+        self.cmd_history(cmd)
+        self.shell(cmd,ignoreErr=True)
+
     def installedGlobal(self):
         return self.pathexists(self.globalInstallPath(0)) or self.pathexists(self.globalInstallPath(1)) 
 
@@ -1134,6 +1257,28 @@ class AppBase(object):
         if self.isCmd() or self.isGitBash():
             return self.path_to_dos(which) == self.path_to_dos(self.localInstallPath())
         return which == self.localInstallPath()
+
+    def install_nginx_admin(self):
+        # root_or_sudo() Check user is root or has sudo privilege and assuming linux
+        if not self.root_or_sudo():
+            return False
+        if self.install_package('nginx', ['/usr/sbin/nginx','/usr/bin/nginx']):
+            if self.is_alpine():
+                self.add_apk_community()
+                self.install_package('sudo')
+            self.create_user(username="nginx-adm", user_id=1700, group_id=1700, home="/opt/nginx-adm")
+            self.history_change_ownership_of_folder()
+            self.chown("/etc/nginx", "nginx-adm:nginx-adm", useSudo=self.is_sudo())
+            self.history_create_soft_link()
+            if self.is_alpine():
+                self.ln("/etc/nginx/http.d", "/opt/nginx-adm/", useSudo=self.is_sudo())
+                result = self.add_alpine_nginx_adm_sudoer()
+            else:
+                self.ln("/etc/nginx/sites-available", "/opt/nginx-adm/", useSudo=self.is_sudo())
+                self.ln("/etc/nginx/sites-enabled", "/opt/nginx-adm/", useSudo=self.is_sudo())
+                result = self.add_nginx_adm_sudoer()
+            return result
+        return True
 
     def install_target_global(self, this, useSudo=False):
         if self.targetApp() != '':
@@ -1182,12 +1327,12 @@ class AppBase(object):
             group_id = user_id
         if stdout=="":
             cmd = ""
-            if self.osVersion().startswith('Alpine'):
+            if self.is_alpine():
                 if self.is_sudo():
                     cmd = "sudo addgroup -g %d %s" % (group_id, groupname)
                 else:
                     cmd = "addgroup -g %d %s" % (group_id, groupname)
-            elif self.osVersion().startswith('Debian') or self.osVersion().startswith('Ubuntu') or self.osVersion().startswith('CentOS'):
+            elif self.is_debian() or self.osVersion().startswith('CentOS'):
                 if self.is_sudo():
                     cmd = "sudo groupadd -g %d %s" % (group_id, groupname)
                 else:
@@ -1200,10 +1345,17 @@ class AppBase(object):
             self.history_group_exists(groupname)
             self.msg_user_group_found(groupname)
 
+    def is_alpine(self):
+        return self.osVersion().startswith('Alpine')
+
     def is_bashprofile_modified(self):
         # Check if .bashrc file exists and if it contains the modification lines
         if not os.path.isfile(self.bashrc()):
             return False
+        with self.open(self.bashrc(), "r") as file:
+            contents = file.read()
+        
+        return "# modified to add ~/.local/bin to PATH" in contents
 
     def is_bashrc_modified(self):
         # Check if .bashrc file exists and if it contains the modification lines
@@ -1215,10 +1367,16 @@ class AppBase(object):
         
         return "# modified to add ~/.local/bin to PATH" in contents
 
+    def is_debian(self):
+        return self.osVersion().startswith('Ubuntu') or self.osVersion().startswith('Debian') or self.osVersion().startswith('Raspbian')
+
     def is_docker_container(self):
         if not hasattr(self, '__is_container__'):
             self.__is_container__=os.path.exists('/.dockerenv')
         return self.__is_container__
+
+    def is_fedora(self):
+        return self.osVersion().startswith('Amazon') or self.osVersion().startswith('Fedora')
 
     def is_linux(self):
         return not (self.osVersion()=='windows' or self.osVersion()=='macOS' or self.osVersion().startswith('macOS'))
@@ -1277,6 +1435,10 @@ class AppBase(object):
             self.__isSudo__=False
         return self.__isSudo__
 
+    def is_latest(self, major1, major2, minor1, minor2, patch1=0, patch2=0):
+        # check 1 is latest, 2 as reference
+        return major1>major2 or (major1==major2 and minor1>minor2) or (major1==major2 and minor1==minor2 and patch1>patch2)
+
     def latest_version(self):
         useRequest = False
         try:
@@ -1295,8 +1457,7 @@ class AppBase(object):
                             if 'minorVersion' in token:
                                 minorVersion = int(token.split('=')[1])
                 self.__latest_version__="%d.%d" % (majorVersion,minorVersion)
-                if majorVersion > self.majorVersion() or (majorVersion == self.majorVersion() and minorVersion> self.minorVersion()):
-                    self.__need_update__=True
+                self.__need_update__=self.is_latest(majorVersion, self.majorVersion(), minorVersion, self.minorVersion())
         except:
             self.msg_no_server()
         if not hasattr(self,'__latest_version__'):
@@ -1432,6 +1593,9 @@ class AppBase(object):
             self.latest_version()
         return self.__need_update__
 
+    def nopw(self, user, cmd):
+        return "%s ALL=(ALL) NOPASSWD: %s" % (user, cmd)
+
     def now(self):
         return str(datetime.now())
 
@@ -1524,7 +1688,7 @@ class AppBase(object):
                 if not result:
                     self.cmd_history_print()
                     self.msg_installation_failed()
-                    return True
+                return True
             else:
                 self.selfInstall()
                 return True
@@ -1585,6 +1749,16 @@ class AppBase(object):
         if len( self.__python_version__.split('('))>1:
             self.__python_version__ =  self.__python_version__.split('(')[0].strip()
         return self.__python_version__
+
+    def rc_update(self, package):
+        self.history_check_rc_update()
+        if self.root_or_sudo():
+            rc_cmd = self.which_cmd("rc-update")
+            if rc_cmd != "":
+                if self.sudo_cmd!="":
+                    cmd = 'sudo %s add %s default' % (rc_cmd, package)
+                else:
+                    cmd = '%s add $s default' % (rc_cmd, package)
 
     def real_path(self, x, curr_path=None):
         if curr_path is None:
@@ -1655,12 +1829,12 @@ class AppBase(object):
         result, stdout = self.shell(cmd, ignoreErr=True)
         if stdout!="":
             cmd = ""
-            if self.osVersion().startswith('Alpine'):
+            if self.is_alpine():
                 if self.is_sudo():
                     cmd = "sudo deluser --remove-home %s" % username
                 else:
                     cmd = "deluser --remove-home %s" % username
-            elif self.osVersion().startswith('Debian') or self.osVersion().startswith('Ubuntu') or self.osVersion().startswith('CentOS'):
+            elif self.is_debian() or self.osVersion().startswith('CentOS'):
                 if self.is_sudo():
                     cmd = "sudo userdel -r %s" % username
                 else:
@@ -1668,6 +1842,13 @@ class AppBase(object):
             self.history_remove_user(username)
             self.cmd_history(cmd)
             self.shell(cmd, ignoreErr=True)
+
+    def remove_nginx_adm_sudoer(self, usr="nginx-adm"):
+        self.history_remove_sudoer()
+        target_sudoers="/etc/sudoers.d/1700-%s" % usr
+        self.cmd_history("ls %s" % target_sudoers)
+        if self.pathexists(target_sudoers):
+            self.sudoRemoveFile(target_sudoers)
 
     def root_or_sudo(self):
         # root_or_sudo() Check user is root or has sudo privilege and assuming linux
@@ -2072,8 +2253,12 @@ class AppBase(object):
         if self.__temp_checked__<1:
             if not self.mkdir(folder):
                 return ""
+        if self.__temp_checked__==0:
+            use_history=True
+        else:
+            use_history=False
         self.__temp_checked__=self.__temp_checked__+1
-        if self.pathexists(folder):
+        if self.pathexists(folder, use_history=use_history):
             return folder
         self.msg_temp_folder_failed(folder)
         return ""
@@ -2133,7 +2318,7 @@ class AppBase(object):
             self.msg_download_not_found(target)
         return result
 
-    def where_cmd(self, cmd):
+    def where_cmd(self, cmd, default=""):
         stdout = ''
         if self.isLinuxShell():
             return self.which_cmd(cmd)
@@ -2148,6 +2333,8 @@ class AppBase(object):
                 for pathlet in split_path:
                     if os.path.exists('%s\\%s' % (pathlet, cmd)):
                         return '%s\\%s' % (pathlet, cmd)
+        if default != "":
+            cmd = default
         return cmd
 
     def which(self):
@@ -2170,17 +2357,21 @@ class AppBase(object):
             if self.pathexists('/usr/bin/which'):
                 return self.which_cmd( self.appName())
 
-    def which_cmd(self, cmd):
+    def which_cmd(self, cmd, default=""):
         stdout = ''
         if self.isCmd() or self.isGitBash():
             return self.where_cmd(cmd)
         elif self.isLinuxShell():
             if os.path.exists('/bin/%s' % cmd):
                 return '/bin/%s' % cmd
+            elif os.path.exists('/sbin/%s' % cmd):
+                return '/sbin/%s' % cmd
             elif os.path.exists('/usr/bin/%s' % cmd):
                 return '/usr/bin/%s' % cmd
             elif os.path.exists('/usr/bin/local/%s' % cmd):
                 return '/usr/bin/local/%s' % cmd
+            elif os.path.exists('/usr/sbin/%s' % cmd):
+                return '/usr/sbin/%s' % cmd
             elif os.path.exists('/home/%s/.local/bin/%s' % (self.username(), cmd)):
                 return '/home/%s/.local/bin/%s' % (self.username(), cmd)
             elif os.path.exists('/usr/bin/which'):
@@ -2194,7 +2385,35 @@ class AppBase(object):
                 for pathlet in split_path:
                     if os.path.exists('%s/%s' % (pathlet, cmd)):
                         return '%s/%s' % (pathlet, cmd)
+        if default!="":
+            cmd=default
         return cmd
+
+    def which_journalctl(self):
+        return self.which_cmd('journalctl', '/usr/bin/journalctl')
+
+    def which_nginx(self):
+        return self.which_cmd('nginx', '/usr/sbin/nginx')
+
+    def which_rc_service(self):
+        return self.which_cmd('rc-service', '/sbin/rc-service')
+
+    def which_systemctl(self):
+        return self.which_cmd('systemctl','/usr/bin/systemctl')
+
+    def which_uname(self):
+        return self.which_cmd('uname', '/usr/bin/uname')
+
+    def ubuntu_version(self):
+        if not hasattr(self,'__ubuntu_version__'):
+            if self.osVersion().startswith("Ubuntu"):
+                version=self.osVersion().split(' ')
+                length=len(version)
+                if length>1:
+                    self.__ubuntu_version__=version[length - 1]
+            else:
+                self.__ubuntu_version__=''
+        return self.__ubuntu_version__
 
     def uname(self, switch, ignoreErr=True):
         stderr = ''
@@ -2202,8 +2421,12 @@ class AppBase(object):
         command = 'uname %s' % switch
         if self.isLinuxShell():
             uname = self.which_cmd('uname')
-            stdout,stderr = Popen([uname,switch],stdin=PIPE,stdout=PIPE,\
-                stderr=PIPE,universal_newlines=True).communicate('\n')
+            command = '%s %s' % (uname, switch)
+            if uname != '':
+                stdout,stderr = Popen([uname,switch],stdin=PIPE,stdout=PIPE,\
+                    stderr=PIPE,universal_newlines=True).communicate('\n')
+            else:
+                return False, 'uname not found'
         if self.isGitBash():
             winpty = self.where_cmd('winpty.exe')
             uname = self.where_cmd('uname.exe')
@@ -2218,8 +2441,11 @@ class AppBase(object):
         else:
             # Assume /bin/sh as default shell
             uname = self.which_cmd('uname')
-            stdout,stderr = Popen([uname,switch],stdin=PIPE,stdout=PIPE,\
-                stderr=PIPE,universal_newlines=True).communicate('\n')
+            if uname != '':
+                stdout,stderr = Popen([uname,switch],stdin=PIPE,stdout=PIPE,\
+                    stderr=PIPE,universal_newlines=True).communicate('\n')
+            else:
+                return False, 'uname not found'
         if stderr != "" and not ignoreErr:
             self.msg_error(command, stderr)
             return False, stderr
@@ -2234,25 +2460,28 @@ class AppBase(object):
 
     def update_repository(self):
         # root_or_sudo() Check user is root or has sudo privilege and assuming linux
+        cmd = ""
         if not self.root_or_sudo():
             return False
         if not hasattr(self,'__has_repository_updated__'):
             self.__has_repository_updated__ = False
         if self.__has_repository_updated__:
             return True
-        if self.osVersion().startswith('Ubuntu') or self.osVersion().startswith('Debian'):
+        if self.is_debian():
             cmd = "apt update"
-        elif self.osVersion().startswith('Alpine'):
+        elif self.is_alpine():
             cmd = "apk update"
         elif self.osVersion().startswith('CentOS'):
             cmd = "yum check-update"
+        elif self.is_fedora():
+            cmd = "dnf check-update"
         else:
             self.msg_not_compatible_os()
         if cmd != "":
             self.history_update_repository()
             self.cmd_history(cmd)
             self.shell(cmd, ignoreErr=True)
-            self.__has_repository_updated__
+            self.__has_repository_updated__=True
             return True
         return False
 
@@ -2268,13 +2497,15 @@ class AppBase(object):
                 if self.pathexists(path, use_history=True):
                     location = path
                     installed=True
+                    self.cmd_history('# found: %s' % location)
             elif isinstance(path,list):
                 for l in path:
                     if self.pathexists(l, use_history=True):
                         location = l
                         installed=True
+                        self.cmd_history('# found: %s' % location)
         if installed:
-            if self.osVersion().startswith('Ubuntu') or self.osVersion().startswith('Debian'):
+            if self.is_debian():
                 self.history_uninstall_package(package)
                 if self.is_sudo():
                     cmd = "sudo apt purge --auto-remove -y %s" % package
@@ -2283,8 +2514,8 @@ class AppBase(object):
                 self.cmd_history(cmd)
                 self.shell(cmd, ignoreErr=True)
                 installed = True
-            elif self.osVersion().startswith('Alpine'):
-                self.history_install_package(package)
+            elif self.is_alpine():
+                self.history_uninstall_package(package)
                 if self.is_sudo():
                     cmd = "sudo apk del %s" % package
                 else:
@@ -2300,6 +2531,14 @@ class AppBase(object):
                 self.cmd_history(cmd)
                 self.shell(cmd, ignoreErr=True)
                 installed = True
+            elif self.is_fedora():
+                if self.is_sudo():
+                    cmd = "sudo dnf remove -y %s" % package
+                else:
+                    cmd = "dnf remove -y %s" % package
+                self.cmd_history(cmd)
+                self.shell(cmd, ignoreErr=True)
+                installed = True
             else:
                 self.msg_not_compatible_os()
                 return False
@@ -2307,6 +2546,12 @@ class AppBase(object):
                 self.msg_unintall_global()
                 return False
         return installed
+
+    def uninstall_python_package(self, package=None):
+        self.history_uninstall_package('jupyter')
+        cmd = 'pip3 uninstall --break-system-packages %s' % package
+        self.cmd_history(cmd)
+        self.shell(cmd,ignoreErr=True)
 
     def usage(self, para=None):
         if not hasattr(self,'__para__'):
@@ -2416,6 +2661,9 @@ class AppBase(object):
 
     def history_check_group_exists(self):
         self.cmd_history("# ** Try to check if the user group exists  **")
+
+    def history_check_rc_update(self):
+        self.cmd_history("# ** Try to check sudo and add rc-update **" )
 
     def history_check_user_exists(self):
         self.cmd_history("# ** Try to check if the user exists  **")
@@ -2695,7 +2943,7 @@ class AppBase(object):
         self.infoMsg("Your OS is not compatible: %s" % self.osVersion(), title)
 
     def msg_not_working_docker(self, title="SYSTEM DAEMON"):
-        self.criticalMsg("systemctl or journalctl can work properly in docker container.", title)
+        self.criticalMsg("systemctl or journalctl cannot work properly in docker container.", title)
 
     def msg_root_continue(self, title="SELF INSTALL"):
         self.infoMsg("You must be root or sudo to continue installation!", title)
