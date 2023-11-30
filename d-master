@@ -3889,5 +3889,5 @@ class DockerBase(AppBase):
 
 if __name__ == "__main__":
     app = DockerBase()
-    app.setInstallation(appName='d-master',author='Cloudgen Wong',homepage="https://github.com/cloudgen2/d-master",downloadUrl="https://dl.leolio.page/d-master",lastUpdate='2023-11-24',majorVersion=11,minorVersion=26)
+    app.setInstallation(appName='d-master',author='Cloudgen Wong',homepage="https://github.com/cloudgen2/d-master",downloadUrl="https://dl.leolio.page/d-master",lastUpdate='2023-11-30',majorVersion=11,minorVersion=30)
     app.start()
