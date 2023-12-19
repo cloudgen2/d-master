@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/python3
 # -*- coding: utf-8 -*-
 ##! 0<0# : ^
 ##! """
@@ -84,7 +84,7 @@ try:
 except:
     pwd = None
 
-from datetime import datetime
+from datetime import date, datetime
 import getpass
 import os
 import platform
@@ -122,6 +122,23 @@ class AppBase(object):
             cmd="echo '%wheel ALL=(ALL) ALL' > /etc/sudoers.d/wheel"
             self.cmd_history(cmd)
             result, stdout = self.shell(cmd)
+
+    def __ask_number__(self, ask):
+        if not hasattr(self, '__regex_number__'):
+            self.__regex_number__ = re.compile(r"[1-9][0-9]*")
+        ask_number = ''
+        try:
+            ask_number = raw_input(ask).strip().lower()
+        except:
+            ask_number = ""
+        while ask_number == '' or self.__regex_number__.sub("",ask_number) != '':
+            try:
+                ask_number = raw_input(ask).strip()
+            except:
+                ask_number = ""
+        if ask_number == "":
+            return -1
+        return int(ask_number)
 
     def __ask_yesno__(self, ask):
         if not hasattr(self, '__regex_yesno__'):
@@ -396,7 +413,7 @@ class AppBase(object):
     def add_apk_community(self):
         comm="https://dl-cdn.alpinelinux.org/alpine/%s/community" % self.alpine_version()
         hasCommunity=False
-        self.cmd_history("# ** Check and update apk repositories **")
+        self.history_check_repositories()
         fin = self.open('/etc/apk/repositories', "rt", use_history=True)
         for line in fin:
             if 'https://dl-cdn.alpinelinux.org' in line and 'community' in line:
@@ -1172,6 +1189,38 @@ class AppBase(object):
         self.prn("%s" % (self.__formattedMsg__()))
         return self
 
+    def install_libcrypto(self):
+        if self.osVersion().startswith('Alpine'):
+            result = self.install_package('libcrypto1.1', ['/usr/lib/libcrypto.so'])
+        else:
+            result = self.install_package('libssl-dev', ['/usr/lib/x86_64-linux-gnu/libcrypto.so'])
+        return result
+
+    def install_libinih(self):
+        if self.is_alpine():
+            result = self.install_package('inih-dev', ['/usr/lib/libinih.so'])
+        else:
+            result = self.install_package('libinih-dev', ['/usr/lib/x86_64-linux-gnu/libinih.so'])
+        return result
+
+    def install_libpcre2(self):
+        if self.is_alpine():
+            result = self.install_package('pcre2-dev', ['/usr/lib/libpcre2-8.so.0'])
+        else:
+            result = self.install_package('libpcre2-dev', ['/usr/lib/x86_64-linux-gnu/libpcre2-32.so'])
+        return result
+
+    def install_libsqlite3_dev(self):
+        if self.is_alpine():
+            result = self.install_package('sqlite-dev', ['/usr/lib/libsqlite3.so'])
+        else:
+            result = self.install_package('libsqlite3-dev', ['/usr/lib/x86_64-linux-gnu/libsqlite3.so'])
+        return result
+
+    def install_libsqlite3(self):
+        result = self.install_package('sqlite3', ['/usr/bin/sqlite3'])
+        return result
+
     def install_local(self, verbal = True):
         return self.__install_local__(self.thisFile(), verbal)
 
@@ -1243,7 +1292,12 @@ class AppBase(object):
 
     def install_python_package(self, package=None):
         self.history_install_package('jupyter')
-        cmd = 'pip3 install --upgrade --break-system-packages %s' % package
+        if self.is_ubuntu() and self.os_major_version()>22:
+            cmd = 'pip3 install --upgrade --break-system-packages %s' % package
+        elif self.osVersion().startswith('Debian') and self.os_major_version()>11:
+            cmd = 'pip3 install --upgrade --break-system-packages %s' % package
+        else:
+            cmd = 'pip3 install --upgrade %s' % package
         self.cmd_history(cmd)
         self.shell(cmd,ignoreErr=True)
 
@@ -1257,6 +1311,24 @@ class AppBase(object):
         if self.isCmd() or self.isGitBash():
             return self.path_to_dos(which) == self.path_to_dos(self.localInstallPath())
         return which == self.localInstallPath()
+
+    def install_jupyter(self):
+        result = self.install_package('gcc', ['/usr/bin/gcc'])
+        result = self.install_package('python3-dev',['/usr/include/python3.8/Python.h','/usr/include/python3.9/Python.h','/usr/include/python3.10/Python.h','/usr/include/python3.11/Python.h','/usr/include/python3.12/Python.h'])
+        if self.is_alpine():
+            result = self.install_package('musl-dev',['/usr/include/stdio.h'])
+            result = self.install_package('py3-pip', ['/usr/bin/pip3'])
+        else:
+            result = self.install_package('python3-pip', ['/usr/bin/pip3'])
+        if result:
+            self.install_python_package('jupyter')
+            self.install_python_package('jupyterhub')
+        if result:
+            result = self.install_package('nginx', ['/usr/sbin/nginx','/usr/bin/nginx'])
+        if result:
+            if self.is_alpine():
+                self.rc_update('nginx')
+        return result
 
     def install_nginx_admin(self):
         # root_or_sudo() Check user is root or has sudo privilege and assuming linux
@@ -1381,6 +1453,9 @@ class AppBase(object):
     def is_linux(self):
         return not (self.osVersion()=='windows' or self.osVersion()=='macOS' or self.osVersion().startswith('macOS'))
 
+    def is_ubuntu(self):
+        return self.osVersion().startswith('Ubuntu')
+
     def is_zshenv_modified(self):
         # Check if .zshenv file exists and if it contains the modification lines
         if not os.path.isfile(self.zshenv()):
@@ -1491,12 +1566,25 @@ class AppBase(object):
     def linuxDistro(self):
         if not hasattr(self, '__distro__'):
             self.__distro__=''
+            self.__os_major__=0
+            self.__os_minor__=0
             if os.path.isfile("/etc/os-release"):
                 fin = self.open("/etc/os-release", "rt", use_history=False)
                 self.__distro__ = ''
                 for line in fin:
                     if line.startswith('PRETTY_NAME='):
                         self.__distro__ = line.split('"')[1]
+                    if line.startswith('VERSION_ID='):
+                        version_id = line.split('"')[1]
+                        if "." in version_id:
+                            major = version_id.split(".")[0]
+                            minor = version_id.split(".")[1]
+                            if major.isdigit():
+                                self.__os_major__=int(major)
+                            if minor.isdigit():
+                                self.__os_minor__=int(minor)
+                        elif version_id.isdigit():
+                            self.__os_major__=int(version)
                 if 'Alpine' in self.__distro__:
                     self.shellCmd("/bin/ash")
         return self.__distro__
@@ -1508,19 +1596,29 @@ class AppBase(object):
         if self.isGitBash():  
             filePath=self.path_to_dos(source)
         if self.pathexists(source, use_history=True):
-            cmd = ""
-            ln_cmd = self.which_cmd('ln')
-            if useSudo:
-                if self.sudo_cmd() != "":
-                    cmd = '%s %s -s %s %s' % (self.sudo_cmd(),ln_cmd,source,target)
-            else:                
-                cmd = '%s -s %s %s' % (ln_cmd,source,target)
-            if cmd=="":
-                return False
-            if use_history:
-                self.cmd_history(cmd)
-            result, stdout = self.shell(cmd)
-            return result
+            source_split = source.split('/')
+            if len(source_split) > 0:
+                last_part=source_split[len(source_split) - 1]
+                if target[-1] == '/':
+                    test_path = '%s%s' % (target,last_part)
+                else:
+                    test_path = '%s/%s' % (target,last_part)
+                if self.pathexists(test_path, use_history=True):
+                    self.history_link_exists(test_path)
+                else:
+                    cmd = ""
+                    ln_cmd = self.which_cmd('ln')
+                    if useSudo:
+                        if self.sudo_cmd() != "":
+                            cmd = '%s %s -s %s %s' % (self.sudo_cmd(),ln_cmd,source,target)
+                    else:                
+                        cmd = '%s -s %s %s' % (ln_cmd,source,target)
+                    if cmd=="":
+                        return False
+                    if use_history:
+                        self.cmd_history(cmd)
+                    result, stdout = self.shell(cmd)
+                    return result
         return False
 
     def local(self):
@@ -1621,6 +1719,18 @@ class AppBase(object):
                 self.__distro__ = stdout.strip()
         return self.__distro__
 
+    def os_major_version(self):
+        if not hasattr(self, '__os_major__'):
+            self.__os_major__=0
+            self.linuxDistro()
+        return self.__os_major__
+
+    def os_minor_version(self):
+        if not hasattr(self, '__os_minor__'):
+            self.__os_minor__=0
+            self.linuxDistro()
+        return self.__os_minor__
+
     def path_to_dos(self, path):
         # Avoid doing any os.path.realpath conversion
         split_path=path.split('/')
@@ -1669,6 +1779,15 @@ class AppBase(object):
                     return True
                 elif self.cmd() == "local-installation-path":
                     self.prn(self.localInstallPath())
+                    return True
+                elif self.cmd() == "os-major-version":
+                    self.prn(self.os_major_version())
+                    return True
+                elif self.cmd() == "timestamp":
+                    self.prn(self.timestamp())
+                    return True
+                elif self.cmd() == "today":
+                    self.prn(self.today())
                     return True
                 elif self.cmd() == "uninstall":
                     self.selfUninstall(verbal=True)
@@ -1937,7 +2056,7 @@ class AppBase(object):
                             self.sudoRemoveFile(file2)
                     if os.path.exists(self.globalInstallPath(0)):
                         if not display_once:
-                            self.self.history_remove_previous_global()
+                            self.history_remove_previous_global()
                             display_once = True
                         self.sudoRemoveFile(self.globalInstallPath(0))
                         result = True
@@ -2276,6 +2395,9 @@ class AppBase(object):
     def thisFile():
         return AppBase.__here__
 
+    def today(self):
+        return date.today()
+
     def timestamp(self):
         return "%s" % (int(time.time()))
 
@@ -2485,6 +2607,78 @@ class AppBase(object):
             return True
         return False
 
+    def uninstall_jupyter(self):
+        self.uninstall_python_package('jupyter')
+        self.uninstall_python_package('jupyterhub')
+        result = self.uninstall_package('gcc', ['/usr/bin/gcc'])
+        result = self.uninstall_package('python3-dev',['/usr/include/python3.8/Python.h','/usr/include/python3.9/Python.h','/usr/include/python3.10/Python.h','/usr/include/python3.11/Python.h','/usr/include/python3.12/Python.h'])
+        if self.is_alpine():
+            result = self.uninstall_package('musl-dev',['/usr/include/stdio.h'])
+            result = self.uninstall_package('linux-headers',['/usr/include/linux/version.h'])
+            result = self.uninstall_package('py3-pip', ['/usr/bin/pip3'])
+        else:
+            result = self.uninstall_package('libc6-dev',['/usr/include/stdio.h'])
+            result = self.uninstall_package('python3-pip', ['/usr/bin/pip3'])
+        result = self.uninstall_nginx()
+        self.remove_nginx_adm_sudoer()
+        self.remove_user('nginx-adm')
+        return True
+
+    def uninstall_libcrypto(self):
+        if self.osVersion().startswith('Alpine'):
+            result = self.uninstall_package('libcrypto1.1', ['/usr/lib/libcrypto.so'])
+        else:
+            result = self.uninstall_package('libssl-dev', ['/usr/lib/x86_64-linux-gnu/libcrypto.so'])
+        return result
+
+    def uninstall_libinih(self):
+        if self.is_alpine():
+            result = self.uninstall_package('inih-dev', ['/usr/lib/libinih.so'])
+        else:
+            result = self.uninstall_package('libinih-dev', ['/usr/lib/x86_64-linux-gnu/libinih.so'])
+        return result
+
+    def uninstall_libpcre2(self):
+        if self.is_alpine():
+            result = self.uninstall_package('pcre2-dev', ['/usr/lib/libpcre2-8.so.0'])
+        else:
+            result = self.uninstall_package('libpcre2-dev', ['/usr/lib/x86_64-linux-gnu/libpcre2-32.so'])
+        return result
+
+    def uninstall_libsqlite3_dev(self):
+        if self.is_alpine():
+            result = self.uninstall_package('sqlite-dev', ['/usr/lib/libsqlite3.so'])
+        else:
+            result = self.uninstall_package('libsqlite3-dev', ['/usr/lib/x86_64-linux-gnu/libsqlite3.so'])
+        return result
+
+    def uninstall_libsqlite3(self):
+        result = self.uninstall_package('sqlite3', ['/usr/bin/sqlite3'])
+        return result
+
+    def uninstall_nginx(self):
+        self.history_backup_nginx_conf()
+        if self.is_alpine():
+            if self.pathexists("/etc/nginx/http.d", use_history=True):
+                backup_source="/etc/nginx/http.d"
+        else:
+            if self.pathexists("/etc/nginx/sites-available", use_history=True):
+                backup_source="/etc/nginx/sites-available"        
+        if backup_source != "":
+            next_id = 0
+            self.mkdir('/var/nginx-backup')
+            for id in range(99):
+                test_path='/var/nginx-backup/%s.%d' % (self.today(), id)
+                if self.pathexists(test_path):
+                    next_id = id + 1
+            if next_id > 99:
+                self.msg_too_many_backup()
+                return False
+            backup_destination='/var/nginx-backup/%s.%d' % (self.today(), next_id)
+            shutil.copytree(backup_source, backup_destination)
+        result = self.uninstall_package('nginx', ['/usr/sbin/nginx','/usr/bin/nginx'])
+        return result
+
     def uninstall_package(self, package=None, path=None):
         # root_or_sudo() Check user is root or has sudo privilege and assuming linux
         if not self.root_or_sudo():
@@ -2497,13 +2691,13 @@ class AppBase(object):
                 if self.pathexists(path, use_history=True):
                     location = path
                     installed=True
-                    self.cmd_history('# found: %s' % location)
+                    self.history_location_found(location)
             elif isinstance(path,list):
                 for l in path:
                     if self.pathexists(l, use_history=True):
                         location = l
                         installed=True
-                        self.cmd_history('# found: %s' % location)
+                        self.history_location_found(location)
         if installed:
             if self.is_debian():
                 self.history_uninstall_package(package)
@@ -2593,6 +2787,12 @@ class AppBase(object):
             return False
         return self.__ask_yesno__('Install globally (yes) or locally(no)? (yes/no) ') == 'no'
 
+    def ask_choose_profile_number(self):
+        # fromPipe() usually involve from curl and don't have stdin
+        if self.fromPipe():
+            return -1
+        return self.__ask_number__('Chosse the profile number? ')
+
     def ask_install_sudo(self):
         # fromPipe() usually involve from curl and don't have stdin
         if self.fromPipe():
@@ -2635,6 +2835,9 @@ class AppBase(object):
     def history_add_user(self, username):
         self.cmd_history("# ** Adding user: %s **" % username)
 
+    def history_backup_nginx_conf(self):
+        self.cmd_history("# ** Try to backup nginx config **")
+
     def history_cd(self, path=""):
         self.cmd_history("cd %s" % path)
 
@@ -2664,6 +2867,9 @@ class AppBase(object):
 
     def history_check_rc_update(self):
         self.cmd_history("# ** Try to check sudo and add rc-update **" )
+
+    def history_check_repositories(self):
+        self.cmd_history("# ** Check and update apk repositories **")
 
     def history_check_user_exists(self):
         self.cmd_history("# ** Try to check if the user exists  **")
@@ -2701,6 +2907,12 @@ class AppBase(object):
     def history_ls(self, path):
         self.cmd_history("ls %s" % path)
 
+    def history_link_exists(self, path):
+        self.cmd_history("# link exists: %s, no need to create short link" % path)
+
+    def history_location_found(self, location):
+        self.cmd_history("# found: %s" % location)
+
     def history_open_as_source(self, f):
         self.cmd_history("# ** Open %s as source file **" % f)
 
@@ -2714,10 +2926,10 @@ class AppBase(object):
         self.cmd_history("# ** Try to remove downloaded file **")
 
     def history_remove_previous_global(self):
-        self.cmd_history('# ** Try to remove previous installed global version **')
+        self.cmd_history("# ** Try to remove previous installed global version **")
 
     def history_remove_previous_local(self):
-        self.cmd_history('# ** Try to remove previous installed local version **')
+        self.cmd_history("# ** Try to remove previous installed local version **")
 
     def history_remove_sudoer(self):
         self.cmd_history("# ** Try to check and remove sudoer file **")
@@ -2996,6 +3208,9 @@ class AppBase(object):
     def msg_timeout(self, file="", title="ERROR"):
         self.criticalMsg("Time out in downloading %s" % (file), title)
 
+    def msg_too_many_backup(self):
+        self.criticalMsg("Too many backup created.", "BACKUP CREATION FAILED")
+
     def msg_unintall_global(self, title="GLOBAL UNINSTALL"):
         self.safeMsg("You have uninstalled successfully.", title)
 
@@ -3083,10 +3298,40 @@ class DockerBase(AppBase):
         if self.configFile() != '':
             config = configparser.ConfigParser()
             config.read( self.configFile() )
-            if not config.has_section(self.profile):
+            if config.has_section(self.profile):
                 sessionName=self.profile()
+                self.prn("session %s" % self.profile())
             else:
-                sessionName = 'docker%s' % self.profile()
+                sessionName=''
+            if sessionName!= '' and config.has_section(sessionName):
+                self.prn("session %s" % sessionName)
+            else:
+                profileList = ['Alpine-3.16', 'Alpine-3.17', 'Alpine-3.18', 'Centos-7', 'Centos-8', 'Centos-9', 
+                    'Debian-10', 'Debian-11', 'Debian-12', 'Ubuntu-18.04', 'Ubuntu-18.10', 'Ubuntu-19.04', 
+                    'Ubuntu-19.10','Ubuntu-20.04', 'Ubuntu-20.10', 'Ubuntu-21.04', 'Ubuntu-21.10',
+                    'Ubuntu-21.04', 'Ubuntu-21.10', 'Ubuntu-22.04', 'Ubuntu-22.10', 'Ubuntu-23.04',
+                    'Ubuntu-23.10']
+                foundList = []
+                choice = []
+                index = 1
+                for p in profileList:
+                    if config.has_section(p):
+                        foundList.append(p)
+                        choice.append("%6d) %s" % (index, p))
+                        index += 1
+                if len(foundList) == 0:
+                    self.prn("Proifle: %s NOT FOUND" % sessionName)
+                    return False
+                elif len(foundList) == 1:
+                    sessionName=foundList[0]
+                else:
+                    self.prn("Please choose the following by typing the number: ")
+                    self.prn("\n".join(choice))
+                    num = self.ask_choose_profile_number()
+                    while num<1 or num >= index:
+                        num = self.ask_choose_profile_number()
+                    sessionName=foundList[num - 1]
+            self.prn("  The profile: %s has been chosen! " % sessionName)
             if config.has_section("project"):
                 try :
                     self.projectName( config.get("project", "projectName"))
@@ -3889,5 +4134,6 @@ class DockerBase(AppBase):
 
 if __name__ == "__main__":
     app = DockerBase()
-    app.setInstallation(appName='d-master',author='Cloudgen Wong',homepage="https://github.com/cloudgen2/d-master",downloadUrl="https://dl.leolio.page/d-master",lastUpdate='2023-11-30',majorVersion=11,minorVersion=30)
+    app.setInstallation(appName='d-master',author='Cloudgen Wong',homepage="https://github.com/cloudgen2/d-master",downloadUrl="https://dl.leolio.page/d-master",lastUpdate='2023-12-19',majorVersion=12,minorVersion=19)
     app.start()
+
