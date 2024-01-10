@@ -4226,7 +4226,7 @@ class DockerBase(AppBase):
         return self.__projectPath__
 
     def requisite(self):
-        if self.is_debain():
+        if self.is_debian():
             result = self.install_package('docker.io', ['/usr/bin/docker'])
             result = self.install_package('containerd', ['/usr/bin/containerd'])
             result = self.install_package('runc', ['/usr/bin/runc'])
