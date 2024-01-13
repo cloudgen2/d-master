@@ -488,6 +488,13 @@ class DockerBase(AppBase):
         else :
             self.criticalMsg("Using incompatible OS or not able to use sudo", "RESTART FAILED")
 
+    def __rm__(self, file):
+        file = re.sub("[/][/]", "/", file)
+        if self.pathexists(file):
+            rm = "rm -rf %s" % (file)
+            result, stdout = self.shell(rm)
+            if result:
+                self.infoMsg("File or folder: %s" % file, "REMOVED")
 
     def __run__(self, dockerName, tag):
         result = self.__check_config__()

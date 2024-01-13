@@ -209,6 +209,9 @@ class AppBase(object):
             self.mkdir(folder)
             file=self.localInstallPath()
             result = self.translateScript(source=this, target=file, useSudo=False)
+        if self.thisFile().endswith(".so"):
+            self.history_copy_static_lib(self.thisFile(), currentframe().f_lineno)
+            self.cp(self.thisFile(), self.localInstallFolder())
         self.check_env()
         if verbal:
             if self.targetApp() == '':
@@ -234,10 +237,8 @@ class AppBase(object):
             if self.allowInstallLocal():
                 if self.fromPipe():
                     return False
-                if self.ask_not_root():
-                    if self.ask_choose():
-                        try_global = False
-                        result = self.__install_local__()
+                try_global = False
+                result = self.__install_local__()
             elif sudo:
                 try_global = True
                 result = False
@@ -250,12 +251,18 @@ class AppBase(object):
                         self.msg_sudo()
                         self.removeGlobalInstaller()
                         result = self.translateScript(source=this, target=self.globalInstallPath(1),useSudo=True)
+                        if self.thisFile().endswith(".so"):
+                            self.history_copy_static_lib(self.thisFile(), currentframe().f_lineno)
+                            self.cp(self.thisFile(), self.globalInstallPath(1), useSudo=True)
                     else:
                         self.msg_sudo_failed()
                         result = False
         else:
             self.removeGlobalInstaller()
             result = self.translateScript(source=this, target=self.globalInstallPath(1))
+            if self.thisFile().endswith(".so"):
+                self.history_copy_static_lib(self.thisFile(), currentframe().f_lineno)
+                self.cp(self.thisFile(), self.globalInstallPath(1), useSudo=True)
         if result:
             if try_global and verbal:
                 self.msg_install_app_global()
@@ -266,20 +273,23 @@ class AppBase(object):
         if self.username() == 'root':
             if self.thisFile().endswith(".so"):
                 self.__self_install__(this=self.this(), verbal=verbal)
+                self.__self_install__(this=self.thisFile(), verbal=verbal)
             else:
                 self.__self_install__(this=self.thisFile(), verbal=verbal)
         elif self.ask_not_root():
             if self.sudo_test():
                 self.msg_sudo()
                 if self.thisFile().endswith(".so"):
-                    return self.__self_install__(this=self.this(), verbal=verbal, sudo=True)
+                    self.__self_install__(this=self.this(), verbal=False, sudo=True)
+                    return self.__self_install__(this=self.thisFile(), verbal=verbal, sudo=True)
                 else:
                     return self.__self_install__(this=self.thisFile(), verbal=verbal, sudo=True)
         elif self.username() != 'root':
             self.msg_root_continue()
             return False
         else:
-            if self.thisFile().endswith(".so"):
+            if self.thisFile().endswith(".so"): 
+                self.__self_install__(this=self.this(), verbal=False)
                 return self.__self_install__(this=self.thisFile(), verbal=verbal)
             else:
                 return self.__self_install__(this=self.this(), verbal=verbal)
@@ -554,7 +564,7 @@ class AppBase(object):
             return self.__python3__
 
     def check_python(self):
-        self.cmd_history("# ** Checking python version  **")
+        self.cmd_history("# ** Checking python version  **",currentframe().f_lineno)
         python2 = self.which_cmd("python2")
         python3 = self.which_cmd("python3")
         arch = 'x86_64'
@@ -1917,6 +1927,7 @@ class AppBase(object):
                     return True
                 elif self.cmd() == "self-install" or self.cmd() == "install" or self.cmd() == "update":
                     self.start_install()
+                    self.cmd_history_print()
                     return True
                 elif self.cmd() == "cython-string":
                     self.prn(self.cythonVersion()) 
@@ -1932,9 +1943,11 @@ class AppBase(object):
                     return True
                 elif self.cmd() == "download":
                     self.download_to_temp(verbal=True)
+                    self.cmd_history_print()
                     return True
                 elif self.cmd() == "download-app" or self.cmd() == "download-target-app":
                     self.download_to_temp(url=self.tempAppUrl(), file=self.tempTargetGzip(), verbal=True)
+                    self.cmd_history_print()
                     return True
                 elif self.cmd() == "global-installation-path":
                     self.prn(self.globalInstallPath(0))
@@ -1954,6 +1967,7 @@ class AppBase(object):
                     return True
                 elif self.cmd() == "uninstall":
                     self.selfUninstall(verbal=True)
+                    self.cmd_history_print()
                     return True
                 elif self.cmd() == "check-update" or self.cmd() == "check-version"  or self.cmd() == "check":
                     self.check_update()
@@ -2187,12 +2201,17 @@ class AppBase(object):
                 return False
 
     def root_or_sudo(self):
+        if not hasattr(self, '__history_check_root__'):
+            self.__history_check_root__ = True
+            self.cmd_history("# ** Check if user is root or can sudo **", currentframe().f_lineno)
         # root_or_sudo() Check user is root or has sudo privilege and assuming linux
         if not self.is_linux():
             return False
         if self.username()=='root':
             return True
         if not hasattr(self, '__asked_sudo__'):
+            if self.allowInstallLocal():
+                return False
             self.__asked_sudo__=True
             if self.ask_not_root():
                 self.sudo_test()
@@ -3167,6 +3186,9 @@ class AppBase(object):
 
     def history_check_user_exists(self, line_num=None):
         self.cmd_history("# ** Try to check if the user exists  **", line_num)
+
+    def history_copy_static_lib(self, so_file, line_num=None):
+        self.cmd_history("# ** Copying static library file: %s **" % so_file, line_num)
 
     def history_copy_temp(self, line_num=None):
         self.cmd_history("# ** Try to copy from temp to target **" , line_num)
@@ -4473,6 +4495,6 @@ class DockerBase(AppBase):
                 self.msg_info()
 
 if __name__ == "__main__":
-    app = DockerBase()
+    app = DockerBase(__file__)
     app.setInstallation(appName='d-master',author='Cloudgen Wong',homepage="https://github.com/cloudgen2/d-master",downloadUrl="https://dl.leolio.page/d-master",lastUpdate='2024-1-13',majorVersion=13,minorVersion=13)
     app.start()
