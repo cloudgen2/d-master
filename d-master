@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/python3
 # -*- coding: utf-8 -*-
 ##! 0<0# : ^
 ##! """
@@ -2613,7 +2613,7 @@ class AppBase(object):
             tar = self.where_cmd('tar.exe')
         else:
             tar = self.which_cmd('tar')
-        cmd= [tar,"-cvf", "--owner=0","--group=0","--no-same-owner","--no-same-permissions", fname, path]
+        cmd= [tar, "--owner=0","--group=0","--no-same-owner","--no-same-permissions","-cvf", fname, path]
         self.cmd_history(" ".join(cmd))
         result, stdout = self.shell(cmd,ignoreErr=True,ignoreAll=True)
 
@@ -3880,20 +3880,23 @@ class DockerBase(AppBase):
 
     def __create_shortlink_so__(self, dir, srcDir):
         if self.pathexists(dir):
-            for filename in os.listdir(dir):
-                f = os.path.join(dir, filename)
-                if os.path.isfile(f):
-                    f2 = re.sub(r"(\.so\.\d+)(\.\d+)*", r"\1", filename)
-                    if f2 != filename:
-                        f3 = re.sub(r"\/.+\/docker-image","",f)
-                        self.cmd_history("# ** Trying to create soft link %s -> %s ** " % (f3,f2), currentframe().f_lineno)
-                        os.chdir(dir)
-                        if os.path.isfile( os.path.join(dir, f2) ):
-                            self.removeFile(os.path.join(dir, f2))
-                            self.removeFile(os.path.join(srcDir, f2))
-                        self.ln(source=filename, target=f2)
-                elif os.path.isdir(f):
-                    self.__create_shortlink_so__(f, os.path.join(srcDir, filename) )
+            try:
+                for filename in os.listdir(dir):
+                    f = os.path.join(dir, filename)
+                    if os.path.isfile(f):
+                        f2 = re.sub(r"(\.so\.\d+)(\.\d+)*", r"\1", filename)
+                        if f2 != filename:
+                            f3 = re.sub(r"\/.+\/docker-image","",f)
+                            self.cmd_history("# ** Trying to create soft link %s -> %s ** " % (f3,f2), currentframe().f_lineno)
+                            os.chdir(dir)
+                            if os.path.isfile( os.path.join(dir, f2) ):
+                                self.removeFile(os.path.join(dir, f2))
+                                self.removeFile(os.path.join(srcDir, f2))
+                            self.ln(source=filename, target=f2)
+                    elif os.path.isdir(f):
+                        self.__create_shortlink_so__(f, os.path.join(srcDir, filename) )
+            except:
+                pass
 
     def __exec__(self, dockerName, display_history=False):
         if 'alpine' in re.split(r'[:/\-]',self.targetOS()):
@@ -4007,11 +4010,13 @@ class DockerBase(AppBase):
             self.hasLib(self.pathexists('%s/lib/' % img_path))
             self.hasLib64(self.pathexists('%s/lib64/' % img_path))
             self.hasEtc(self.pathexists('%s/etc/' % img_path))
+            self.hasOpt(self.pathexists('%s/opt/' % img_path))
             usrlib = '%s/usr/lib' % img_path
             usrLocalBin = '%s/usr/local/lib' % img_path
             lib = '%s/lib' % img_path
             srcUsrlib = '%s/src/usr/lib' % dockerPath
             srcLib = '%s/src/lib' % dockerPath
+            opt = '%s/src/opt' % dockerPath
             if self.hasUsr():
                 self.__create_shortlink_so__(usrlib, srcUsrlib)
                 if self.pathexists(usrLocalBin):
@@ -4039,6 +4044,10 @@ class DockerBase(AppBase):
                 os.chdir(img_path)
                 self.tar_compress("../target/lib64.tar.gz","lib64")
                 os.chdir(self.curPath())
+            if self.hasOpt():
+                self.cmd_history("# ** Trying to create compressed file (opt.tar.gz) for container **")
+                os.chdir(img_path)
+                self.tar_compress("../target/opt.tar.gz","opt")
         else :
             self.criticalMsg("Dockerfile Not found", "DOCKERFILE")
         return result
@@ -4241,6 +4250,14 @@ class DockerBase(AppBase):
         elif not hasattr(self, '__hasLib64__'):
             self.__hasLib64__=False
         return self.__hasLib64__
+
+    def hasOpt(self, hasOpt=None):
+        if hasOpt is not None:
+            self.__hasOpt__=hasOpt
+            return self
+        elif not hasattr(self, '__hasOpt__'):
+            self.__hasOpt__=False
+        return self.__hasOpt__
 
     def hasRoot(self, hasRoot=None):
         if hasRoot is not None:
@@ -4546,3 +4563,4 @@ if __name__ == "__main__":
     app = DockerBase(__file__)
     app.setInstallation(appName='d-master',author='Cloudgen Wong',homepage="https://github.com/cloudgen2/d-master",downloadUrl="https://dl.leolio.page/d-master",lastUpdate='2024-1-15',majorVersion=13,minorVersion=15)
     app.start()
+
