@@ -4454,7 +4454,7 @@ class DockerBase(AppBase):
                             tag = self.tag()
                         self.__build__(tag)
                     return True
-                elif self.cmd() == "clean-image" or self.cmd() == "clean-image2":
+                elif self.cmd() == "clean-image" or self.cmd() == "clean-images":
                     self.__clean_image__()
                     return True
                 elif self.cmd() == 'container' or self.cmd() == 'containers' :
