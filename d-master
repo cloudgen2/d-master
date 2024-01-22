@@ -63,7 +63,7 @@ import time
 import sys
 
 class AppBase(object):
-    VERSION="1.4"
+    VERSION="1.6"
     BOLD='\033[1m'
     DARK_AMBER='\033[33m'
     DARK_BLUE='\033[34m'
@@ -611,7 +611,7 @@ class AppBase(object):
                             self.__cython_version__=f"cpython-{version_array[0]}{version_array[1]}-{arch}-linux-gnu"
         self.__python_checked__ = True
 
-    def cmd_history(self,cmd=None, line=None):
+    def cmd_history(self,command=None, line=None):
         if not hasattr(self, '__reg_end_stars__'):
             self.__reg_end_stars__ = re.compile(r"[\*]+\s*$")
         if hasattr(self, "__tick__"):
@@ -624,9 +624,15 @@ class AppBase(object):
             self.__cmd_history_id__=1
         if not hasattr(self,'__cmd_history__'):
             self.__cmd_history__=["# ====== Command History starting at %s: ======" % self.__tick__]
-        if cmd is None:
+        if command is None:
             return self.__cmd_history__
         else:
+            if isinstance(command, basestring):
+                cmd = command
+            elif isinstance(command, list):
+                cmd = " ".join(command)
+            else:
+                cmd = ""
             if cmd.startswith("# **"):
                 if line is not None:
                     line_at = "--line %d--" % line
@@ -637,7 +643,7 @@ class AppBase(object):
                     self.__cmd_history__.append("  #    ...( %.3f second )" % self.__diff_time__)
                 self.__cmd_history__.append("# ** %d. %s %s **" % (self.__cmd_history_id__, cmd[5:], line_at))
                 self.__cmd_history_id__ = self.__cmd_history_id__ + 1
-            else:
+            elif cmd != "":
                 self.__cmd_history__.append("  %s" % cmd)
         return self
 
@@ -1315,6 +1321,12 @@ class AppBase(object):
             self.msg_global_already()
             return False
 
+    def install_containerd(self):
+        return self.install_package('containerd', ['/usr/bin/containerd'])
+
+    def install_docker_io(self):
+        return self.install_package('docker.io', ['/usr/bin/docker'])
+
     def install_libcrypto(self):
         if self.osVersion().startswith('Alpine'):
             result = self.install_package('libcrypto1.1', ['/usr/lib/libcrypto.so'])
@@ -1346,6 +1358,11 @@ class AppBase(object):
     def install_libsqlite3(self):
         result = self.install_package('sqlite3', ['/usr/bin/sqlite3'])
         return result
+
+    def install_linux_headers(self):
+        if self.is_alpine():
+            return self.install_package('linux-headers',['/usr/include/linux/version.h'])
+        return True
 
     def install_local(self, verbal = True):
         if self.thisFile().endswith(".so"):
@@ -1468,7 +1485,7 @@ class AppBase(object):
             else:
                 self.install_package('pytho3-devel')
         if self.python3() == '' and self.python2() == '':
-            self.cmd_history("  # Both python2 and python3 not found! ")
+            self.cmd_history("# Both python2 and python3 not found! ")
 
 
     def install_python_package(self, package):
@@ -1481,6 +1498,9 @@ class AppBase(object):
             cmd = 'pip3 install --upgrade %s' % package
         self.cmd_history(cmd)
         self.shell(cmd,ignoreErr=True)
+
+    def install_runc(self):
+        return self.install_package('runc', ['/usr/bin/runc'])
 
     def installedGlobal(self):
         return self.pathexists(self.globalInstallPath(0)) or self.pathexists(self.globalInstallPath(1)) 
@@ -1502,9 +1522,9 @@ class AppBase(object):
 
     def install_jupyter(self):
         result = self.install_gcc()
-        result = self.install_package('python3-dev',['/usr/include/python3.8/Python.h','/usr/include/python3.9/Python.h','/usr/include/python3.10/Python.h','/usr/include/python3.11/Python.h','/usr/include/python3.12/Python.h'])
-        if self.is_alpine():
-            result = self.install_package('musl-dev',['/usr/include/stdio.h'])
+        result = self.install_python_dev()
+        result = self.install_linux_headers()
+        result = self.install_musl_dev()
         result = self.install_pip()
         if result:
             self.install_python_package('jupyter')
@@ -1649,6 +1669,15 @@ class AppBase(object):
 
     def is_fedora(self):
         return self.osVersion().startswith('Amazon Linux') or self.osVersion().startswith('Fedora')
+
+    def is_gnu_tar(self):
+        result = False
+        tar = self.which_cmd("tar")
+        if tar != "":
+            result, stdout = self.shell(f"{tar} --version")
+            if "GNU tar" in stdout:
+                result = True
+        return result
 
     def is_kali(self):
         return self.osVersion().startswith('Kali')
@@ -2042,7 +2071,7 @@ class AppBase(object):
             elif self.allowDisplayInfo():
                 self.msg_info(usage)
                 return True
-        elif self.allowSelfInstall():
+        if self.allowSelfInstall():
             if self.fromPipe():
                 result = self.download_and_install(verbal=False)
                 if hasattr(self,"requisite") and callable(self.requisite):
@@ -2051,6 +2080,7 @@ class AppBase(object):
                 if not result:
                     self.msg_installation_failed()
                 return True
+            self.prn(f"from pipeline {self.fromPipe()}")
         return False
 
     def pathexists(self, path, use_history=False):
@@ -2180,11 +2210,18 @@ class AppBase(object):
                 if file.endswith(pattern):
                     self.removeFile("%s/%s" % (dirPath,file))
 
-    def removeFolder(self, dirPath):
+    def removeFolder(self, dirPath, use_history=False):
+        if use_history:
+            self.history_remove_folder(dirPath)
         if self.isCmd() or self.isGitBash():
             dirPath=self.path_to_dos(dirPath)
         if self.pathexists(dirPath) and os.path.isdir(dirPath):
+            if use_history:
+                self.cmd_history(f"rm -rf {dirPath}")
             shutil.rmtree(dirPath)
+        else:
+            if use_history:
+                self.cmd_history(f"# folder {dirPath}: not found, cannot be removed.")
 
     def remove_user(self, username=None):
         cmd= "id %s" % username
@@ -2633,7 +2670,7 @@ class AppBase(object):
             tar = self.where_cmd('tar.exe')
         else:
             tar = self.which_cmd('tar')
-        cmd= [tar, "--owner=0","--group=0","--no-same-owner","--no-same-permissions","-cvf", fname, path]
+        cmd= [tar, "--no-same-owner","--no-same-permissions","-cvf", fname, path]
         self.cmd_history(" ".join(cmd))
         result, stdout = self.shell(cmd,ignoreErr=True,ignoreAll=True)
 
@@ -2741,7 +2778,10 @@ class AppBase(object):
 
     @staticmethod
     def thisFile():
-        return AppBase.__here__
+        if AppBase.__here__ == "" or AppBase.__here__=="<stdin>":
+            return AppBase.__here__
+        else:
+            return os.path.realpath(AppBase.__here__)
 
     def today(self):
         return date.today()
@@ -2959,14 +2999,17 @@ class AppBase(object):
             return True
         return False
 
+    def unisntall_gcc(self):
+        return self.uninstall_package('gcc', ['/usr/bin/gcc'])
+
     def uninstall_jupyter(self):
         self.uninstall_python_package('jupyter')
         self.uninstall_python_package('jupyterhub')
-        result = self.uninstall_package('gcc', ['/usr/bin/gcc'])
+        result = self.uninstall_gcc()
         result = self.uninstall_package('python3-dev',['/usr/include/python3.8/Python.h','/usr/include/python3.9/Python.h','/usr/include/python3.10/Python.h','/usr/include/python3.11/Python.h','/usr/include/python3.12/Python.h'])
         if self.is_alpine():
-            result = self.uninstall_package('musl-dev',['/usr/include/stdio.h'])
-            result = self.uninstall_package('linux-headers',['/usr/include/linux/version.h'])
+            result = self.uninstall_musl_dev() 
+            result = self.uninstall_linux_headers()
         else:
             result = self.uninstall_package('libc6-dev',['/usr/include/stdio.h'])
         self.install_pip()
@@ -2981,6 +3024,16 @@ class AppBase(object):
         else:
             result = self.uninstall_package('libssl-dev', ['/usr/lib/x86_64-linux-gnu/libcrypto.so'])
         return result
+
+    def uninstall_linux_headers(self):
+        if self.is_alpine():
+            return self.uninstall_package('linux-headers',['/usr/include/linux/version.h'])
+        return True
+
+    def uninstall_musl_dev(self):
+        if self.is_alpine():
+            return self.uninstall_package('musl-dev',['/usr/include/stdio.h'])
+        return True
 
     def uninstall_libinih(self):
         if self.is_alpine():
@@ -3274,6 +3327,9 @@ class AppBase(object):
     def history_check_zsh(self, line_num=None):
         self.cmd_history("# ** Try to check and modify ~/.zshenv **", line_num)
 
+    def history_compress(self, target_file, line_num=None):
+        self.cmd_history("# ** Trying to create compressed file {target_file} for container **", currentframe().f_lineno)
+
     def history_create_soft_link(self, line_num=None):
         self.cmd_history("# ** Try to create soft link **", line_num)
 
@@ -3312,6 +3368,9 @@ class AppBase(object):
 
     def history_remove_downloaded(self, line_num=None):
         self.cmd_history("# ** Try to remove downloaded file **", line_num)
+
+    def history_remove_folder(self, folder, line_num=None):
+        self.cmd_history(f"# ** Try to remove folder: {folder} **", line_num)
 
     def history_remove_previous_global(self, line_num=None):
         self.cmd_history("# ** Try to remove previous installed global version **", line_num)
@@ -3373,6 +3432,9 @@ class AppBase(object):
 
     def msg_extraction_error(self, file="", title="DOWNLOAD ERROR"):
         self.criticalMsg("File Extraction error: %s not found" % file, title)
+
+    def msg_incompatiable_os(self, title="INSTALL"):
+        self.criticalMsg("Using incompatible OS or not able to use sudo", title)
 
     def msg_installation_failed(self, title="INSTALLATION"):
         self.criticalMsg("Installation failed!", title)
@@ -3677,7 +3739,7 @@ class DockerBase(AppBase):
                 result, stdout = self.shell(cmd, ignoreErr=True)
                 print(stdout)
             else :
-                self.criticalMsg("Using incompatible OS or not able to use sudo", "BUILD FAILED")
+                self.msg_incompatiable_os("BUILD FAILED")
         if result: 
             self.safeMsg("Command 'build' executed!", "COMMAND")
 
@@ -3704,7 +3766,7 @@ class DockerBase(AppBase):
                         else :
                             print(stdout)
         else :
-            self.criticalMsg("Using incompatible OS or not able to use sudo", "CLEAN FAILED")
+            self.msg_incompatiable_os("CLEAN FAILED")
 
     def __clean_target__(self, path):
         result, stdout = self.shell('rm -rf "%s/target/*"' % path, True)
@@ -4048,28 +4110,28 @@ class DockerBase(AppBase):
             if self.hasLib():
                 self.__create_shortlink_so__(lib, srcLib)
             if self.hasRoot():
-                self.cmd_history("# ** Trying to create compressed file (root.tar.gz) for container **", currentframe().f_lineno)
+                self.history_compress("root.tar.gz", currentframe().f_lineno)
                 os.chdir(img_path)
                 self.tar_compress("../target/root.tar.gz","root")
             if self.hasUsr():
-                self.cmd_history("# ** Trying to create compressed file (usr.tar.gz) for container **", currentframe().f_lineno)
+                self.history_compress("usr.tar.gz", currentframe().f_lineno)
                 os.chdir(img_path)
                 self.tar_compress("../target/usr.tar.gz","usr")
             if self.hasEtc():
-                self.cmd_history("# ** Trying to create compressed file (etc.tar.gz) for container **", currentframe().f_lineno)
+                self.history_compress("etc.tar.gz", currentframe().f_lineno)
                 os.chdir(img_path)
                 self.tar_compress("../target/etc.tar.gz","etc")
             if self.hasLib():
-                self.cmd_history("# ** Trying to create compressed file (lib.tar.gz) for container **", currentframe().f_lineno)
+                self.history_compress("lib.tar.gz", currentframe().f_lineno)
                 os.chdir(img_path)
                 self.tar_compress("../target/lib.tar.gz","lib")
             if self.hasLib64():
-                self.cmd_history("# ** Trying to create compressed file (lib64.tar.gz) for container **", currentframe().f_lineno)
+                self.history_compress("lib64.tar.gz", currentframe().f_lineno)
                 os.chdir(img_path)
                 self.tar_compress("../target/lib64.tar.gz","lib64")
                 os.chdir(self.curPath())
             if self.hasOpt():
-                self.cmd_history("# ** Trying to create compressed file (opt.tar.gz) for container **")
+                self.history_compress("opt.tar.gz", currentframe().f_lineno)
                 os.chdir(img_path)
                 self.tar_compress("../target/opt.tar.gz","opt")
         else :
@@ -4368,9 +4430,9 @@ class DockerBase(AppBase):
 
     def requisite(self):
         if self.is_debian():
-            result = self.install_package('docker.io', ['/usr/bin/docker'])
-            result = self.install_package('containerd', ['/usr/bin/containerd'])
-            result = self.install_package('runc', ['/usr/bin/runc'])
+            result = self.install_docker_io()
+            result = self.install_containerd()
+            result = self.install_runc()
 
     def targetOS(self, targetOS=None):
         if targetOS is not None:
@@ -4548,12 +4610,9 @@ class DockerBase(AppBase):
                             self.cmd_history("# ** Remove temporary folder **", currentframe().f_lineno)
                             dockerPath=self.dockerPath()
                             if dockerPath !="":
-                                self.cmd_history("rm -rf %s/docker-image" % dockerPath)
-                                self.removeFolder("%s/docker-image" % dockerPath)
-                                self.cmd_history("rm -rf %s/target" % dockerPath)
-                                self.removeFolder("%s/target" % dockerPath)
-                                self.cmd_history("rm -rf %s/repo" % dockerPath)
-                                self.removeFolder("%s/repo" % dockerPath)
+                                self.removeFolder("%s/docker-image" % dockerPath, use_history=True)
+                                self.removeFolder("%s/target" % dockerPath, use_history=True)
+                                self.removeFolder("%s/repo" % dockerPath, use_history=True)
                             self.cmd_history_print()
                     return True
                 elif self.cmd() == 'restart':
@@ -4585,5 +4644,955 @@ class DockerBase(AppBase):
 
 if __name__ == "__main__":
     app = DockerBase(__file__)
-    app.setInstallation(appName='d-master',author='Cloudgen Wong',homepage="https://github.com/cloudgen2/d-master",downloadUrl="https://dl.leolio.page/d-master",lastUpdate='2024-1-16',majorVersion=13,minorVersion=16)
+    app.setInstallation(appName='d-master',author='Cloudgen Wong',homepage="https://github.com/cloudgen2/d-master",downloadUrl="https://dl.leolio.page/d-master",lastUpdate='2024-1-21',majorVersion=13,minorVersion=21)
+    app.start()
+
+# @file 14-docker-base.txt
+# @date 2023-10-27
+# @author Cloudgen Wong
+class DockerBase(AppBase):
+
+    def __attach__(self, dockerName, display_history=False):
+        if self.is_mac():
+            self.cmd_history("# ** Docker Command ** ")
+            try:
+                self.cmd_history(" ".join(["docker","attach", dockerName]))
+                if display_history:
+                    self.cmd_history_print()
+                subprocess.run(["docker","attach", dockerName])
+            except:
+                self.run_shell(" ".join(["docker","attach", dockerName]))
+        elif self.sudo_test():
+            self.cmd_history("# ** Docker Command ** ")
+            try:
+                self.cmd_history(" ".join(["docker","attach", dockerName]))
+                if display_history:
+                    self.cmd_history_print()
+                subprocess.run(["sudo","docker","attach", dockerName])
+            except:
+                self.run_shell(" ".join(["sudo","docker","attach", dockerName ]))
+        else :
+            self.criticalMsg("Terminated!","ATTACH")
+
+    def __build__(self, tag):
+        result = self.__prebuild__()
+        if result:
+            cmd = ''
+            os.chdir(self.dockerPath())
+            self.cmd_history("# ** Docker Command ** ")
+            if self.osVersion() == 'macOS':
+                cmd = "docker build -t %s/%s:%s ." % (self.maintainer(), self.projectName(),tag)
+            elif self.sudo_test():
+                cmd = "sudo docker build -t %s/%s:%s ." % (self.maintainer(), self.projectName(),tag)
+            if cmd != '' :
+                self.cmd_history(cmd)
+                result, stdout = self.shell(cmd, ignoreErr=True)
+                print(stdout)
+            else :
+                self.msg_incompatiable_os("BUILD FAILED")
+        if result: 
+            self.safeMsg("Command 'build' executed!", "COMMAND")
+
+    def __clean_image__(self):
+        if self.osVersion() == 'macOS':
+            cmd = "docker image ls"
+        elif self.sudo_test():
+            cmd = "sudo docker image ls"
+        if cmd != '' :
+            result, stdout = self.shell(cmd)
+            for l in stdout.split('\n'):
+                if '<none>' in l:
+                    token = l.split()
+                    if len(token) > 3:
+                        self.cmd_history("# ** Docker Command ** ")
+                        if self.osVersion() == 'macOS':
+                            cmd = "docker image rm %s" % token[2]
+                        else :
+                            cmd = "sudo docker image rm %s" % token[2]
+                        self.cmd_history(cmd)
+                        result, stdout = self.shell( cmd, True )
+                        if stdout == "": 
+                            self.infoMsg("docker image %s is being used" % token[2], "CANNOT REMOVE")
+                        else :
+                            print(stdout)
+        else :
+            self.msg_incompatiable_os("CLEAN FAILED")
+
+    def __clean_target__(self, path):
+        result, stdout = self.shell('rm -rf "%s/target/*"' % path, True)
+        result = self.mkdir("%s/target" % path) 
+        return result
+
+    def __check_config__(self, display_list=False):
+        if self.configFile() == '':
+            self.findConfig("project.ini")
+        if self.configFile() != '':
+            config = configparser.ConfigParser()
+            config.read( self.configFile() )
+            if config.has_section(self.profile()):
+                sessionName=self.profile()
+            else:
+                sessionName=''
+            if not (sessionName!= '' and config.has_section(sessionName)):
+                profileList = ['Alpine-3.16', 'Alpine-3.17', 'Alpine-3.18', 'Centos-7', 'Centos-8', 'Centos-9', 
+                    'Debian-10', 'Debian-11', 'Debian-12', 'Ubuntu-18.04', 'Ubuntu-18.10', 'Ubuntu-19.04', 
+                    'Ubuntu-19.10','Ubuntu-20.04', 'Ubuntu-20.10', 'Ubuntu-21.04', 'Ubuntu-21.10',
+                    'Ubuntu-21.04', 'Ubuntu-21.10', 'Ubuntu-22.04', 'Ubuntu-22.10', 'Ubuntu-23.04',
+                    'Ubuntu-23.10']
+                foundList = []
+                choice = []
+                index = 1
+                for p in profileList:
+                    if config.has_section(p):
+                        foundList.append(p)
+                        choice.append("%6d) %s" % (index, p))
+                        index += 1
+                if len(foundList) == 0:
+                    self.prn("Proifle: %s NOT FOUND" % sessionName)
+                    return False
+                elif len(foundList) == 1:
+                    sessionName=foundList[0]
+                elif display_list:
+                    self.prn("\n".join(choice))
+                else:
+                    self.prn("Please choose the following by typing the number (type 'exit' to exit): ")
+                    self.prn("\n".join(choice))
+                    self.prn("  type 'exit' to exit")
+                    num = self.ask_choose_profile_number()
+                    if num == -1 :
+                        exit()
+                    while num<1 or num >= index:
+                        num = self.ask_choose_profile_number()
+                        if num == -1 :
+                            exit()
+                    sessionName=foundList[num - 1]
+            self.profile(sessionName)
+            if config.has_section("project"):
+                try :
+                    self.projectName( config.get("project", "projectName"))
+                except :
+                    pass
+                try:
+                    self.dockerName( config.get("project", "dockerName"))
+                except :
+                    pass
+                try:
+                    self.exposedVolume( config.get("project", "exposedVolume"))
+                except:
+                    pass
+                try:
+                    self.maintainer( config.get("project", "maintainer"))
+                except:
+                    pass
+                try:
+                    self.maintainerEmail( config.get("project", "maintainerEmail"))
+                except:
+                    pass
+                try:
+                    self.maintainerEmail( config.get("project", "maintainerEmail"))
+                except:
+                    pass
+                try:
+                    arch = self.arch()
+                    if arch == '':
+                        self.tag(config.get("project", "tag"))
+                    else :
+                        self.tag( "%s-%s" % (config.get("project", "tag"), arch))
+                except:
+                    pass
+                try:
+                    self.externalPort( config.get("project", "externalPort"))
+                except:
+                    pass
+                try:
+                    self.portMapping( config.get("project", "portMapping"))
+                except:
+                    pass
+                try:
+                    self.exposedPort( config.get("project", "exposedPort"))
+                except:
+                    pass
+                return True
+            elif config.has_section("docker") and config.has_section(sessionName):
+                try :
+                    self.projectName( config.get("docker", "projectName"))
+                except :
+                    pass 
+                try :
+                    self.dockerName( config.get(sessionName, "dockerName"))
+                except :
+                    pass
+                try:
+                    self.exposedVolume( config.get(sessionName, "exposedVolume"))
+                except:
+                    pass
+                try:
+                    self.maintainer( config.get("docker", "maintainer"))
+                except:
+                    pass
+                try:
+                    self.maintainerEmail( config.get("docker", "maintainerEmail"))
+                except:
+                    pass
+                try:
+                    arch = self.arch()
+                    if arch == '':
+                        self.tag(config.get(sessionName, "tag"))
+                    else :
+                        self.tag( "%s-%s" % (config.get(sessionName, "tag"), arch))
+                except:
+                    pass
+                try:
+                    arch = self.arch()
+                    self.targetOS(config.get(sessionName, "os"))
+                    if arch == '':
+                        self.tag(config.get(sessionName, "os"))
+                    else :
+                        self.tag( "%s-%s" % (config.get(sessionName, "os"), arch))
+                except:
+                    pass
+                try:
+                    self.externalPort( config.get(sessionName, "externalPort"))
+                except:
+                    pass
+                try:
+                    self.portMapping( config.get(sessionName, "portMapping"))
+                except:
+                    pass
+                    #self.infoMsg("exposedPort not in config", "TAG FAILED")
+                try:
+                    self.exposedPort( config.get(sessionName, "exposedPort"))
+                except:
+                    pass
+                if self.maintainer() == '':
+                    self.infoMsg("Can't find maintainer in config", "CONFIG FAILED")
+                if self.maintainerEmail() == '':
+                    self.infoMsg("Can't find maintainerEmail in config", "CONFIG FAILED")
+                if self.projectName() == '':
+                    self.infoMsg("Can't find projectName in config", "CONFIG FAILED")
+                if self.dockerName() == '':
+                    self.infoMsg("Can't find dockerName in config", "CONFIG FAILED")
+                if self.tag() == '':
+                    self.infoMsg("Can't find tag in config", "CONFIG FAILED")
+                return self.maintainer() != '' and self.maintainerEmail() != '' and self.projectName() != '' and self.dockerName() != '' and self.tag() !=''
+        else :
+            self.criticalMsg("File: project.ini not found!","NO CONFIG")
+        return False
+
+    def __check_npm__(self):
+        if self.pathexists('%s/app' % self.projectPath()):
+            if os.listdir('%s/app' % self.projectPath()):
+                if self.pathexists('%s/app/package.json' % self.projectPath()):
+                    if self.which_cmd("npm") != '':
+                        os.chdir('%s/app' % self.projectPath())
+                        result, stdout = self.shell('rm -rf node_modules')    
+                        result, stdout = self.shell('npm install')
+                        os.chdir( self.projectPath())
+                        return True
+                    else :
+                        return False
+        return True
+
+    def __collect_container__(self, verbal=False):
+        cmd = ''
+        self.__containers__={}
+        if self.is_mac():
+            cmd = "docker container ls --all" 
+        elif self.sudo_test():
+            cmd = "sudo docker container ls --all"
+        if cmd != '' :
+            self.cmd_history('# ** Check exists docker containers **', currentframe().f_lineno)
+            self.cmd_history(cmd)
+            result, stdout = self.shell(cmd, True)
+            if stdout != '':
+                for l in stdout.split('\n'):
+                    if l not in self.__containers__:
+                        self.__containers__[l] = True
+                        if verbal:
+                            print(l)
+
+    def __container_ls__(self):
+        self.__collect_container__(verbal=True)
+
+    def __create_shortlink_so__(self, dir, srcDir):
+        if self.pathexists(dir):
+            try:
+                for filename in os.listdir(dir):
+                    f = os.path.join(dir, filename)
+                    if os.path.isfile(f):
+                        f2 = re.sub(r"(\.so\.\d+)(\.\d+)*", r"\1", filename)
+                        if f2 != filename:
+                            f3 = re.sub(r"\/.+\/docker-image","",f)
+                            self.cmd_history("# ** Trying to create soft link %s -> %s ** " % (f3,f2), currentframe().f_lineno)
+                            os.chdir(dir)
+                            if os.path.isfile( os.path.join(dir, f2) ):
+                                self.removeFile(os.path.join(dir, f2))
+                                self.removeFile(os.path.join(srcDir, f2))
+                            self.ln(source=filename, target=f2)
+                    elif os.path.isdir(f):
+                        self.__create_shortlink_so__(f, os.path.join(srcDir, filename) )
+            except:
+                pass
+
+    def __exec__(self, dockerName, display_history=False):
+        if 'alpine' in re.split(r'[:/\-]',self.targetOS()):
+            shell = '/bin/ash'
+        else:
+            shell = '/bin/bash'
+        self.cmd_history("# ** Docker Command ** ", currentframe().f_lineno)
+        if self.is_mac():
+            try:
+                self.cmd_history(' '.join(["docker","exec","-it", dockerName,shell]))
+                if display_history:
+                    self.cmd_history_print()
+                subprocess.run(["docker","exec","-it", dockerName,shell])
+            except:
+                self.run_shell(" ".join(["docker","exec","-it", dockerName,shell]))
+        elif self.sudo_test():
+            try:
+                self.cmd_history(' '.join(["sudo","docker","exec","-it", dockerName,shell]))
+                if display_history:
+                    self.cmd_history_print()
+                subprocess.run(["sudo","docker","exec","-it", dockerName,shell])
+            except:
+                self.run_shell(" ".join(["sudo","docker","exec","-it", dockerName, shell ]))
+        else :
+            self.criticalMsg("Terminated!","RUN")
+
+    def __image_ls__(self):
+        cmd = ''
+        if self.is_mac():
+            cmd = "docker image ls" 
+        elif self.sudo_test():
+            cmd = "sudo docker image ls" 
+        if cmd != '' :
+            result, stdout = self.shell(cmd, True)
+            if stdout != '':
+                for l in stdout.split('\n'):
+                    print(l)
+
+    def check_container(self, name):
+        cmd = ""
+        if self.osVersion() == 'macOS':
+            cmd=f"docker container ls -f name={name}"
+        elif self.sudo_test():
+            cmd=f"sudo docker container ls -f name={name}"
+        if cmd != '' :
+            result, stdout = self.shell(cmd , True)
+            if result:
+                for rawline in stdout.splitlines():
+                    if name in rawline:
+                        return True
+        return False
+
+    def __ls__(self):
+        self.__collect_container__()
+        found = 0
+        for name in self.__containers__:
+            if name == self.dockerName() or name == '%s-test' % self.dockerName():
+                print(name)
+                found = found + 1
+        if found == 0 :
+            self.infoMsg("Docker Container: '%s' or '%s' missing!" % (self.dockerName(),'%s-test' % self.dockerName()), "NOT FOUND")
+
+    def __prebuild__(self):
+        dockerPath = self.dockerPath()
+        if dockerPath!="":
+            self.safeMsg("Using docker path: %s" % dockerPath, 'DOCKER PATH')
+            os.chdir(self.projectPath())
+            img_path=self.imagePath()
+            result = self.__clean_target__(dockerPath)
+
+            if dockerPath != self.projectPath():
+                result, stdout = self.shell("rm -rf %s/*" % img_path, True )
+                self.mkdir( img_path )
+                if self.pathexists('%s/docker-image' % self.projectPath()):
+                    result, stdout = self.shell('cp -rP "%s/docker-image" "%s/"' % (self.projectPath(),dockerPath))
+                if self.pathexists('%s/src' % dockerPath):
+                    if os.listdir('%s/src' % dockerPath):
+                        result, stdout = self.shell('cp -rP %s/src/* "%s/"' % (dockerPath,img_path))
+            if not self.__check_npm__():
+                self.criticalMsg("npm is required", "NO NPM")
+                return False
+            os.chdir(self.projectPath())
+            if self.pathexists('%s/app' % self.projectPath()):
+                result, stdout = self.shell('cp -rP %s/app "%s/root/.init/"' % (self.projectPath(),img_path))
+            if self.pathexists('%s/data' % self.projectPath()):
+                if os.listdir('%s/data' % self.projectPath()):
+                    self.mkdir('%s/root/.data/' % img_path)
+                    result, stdout = self.shell('cp -rP %s/data/* "%s/root/.data/"' % (self.projectPath(),img_path))
+            if self.pathexists('%s/bin' % self.projectPath()):
+                if os.listdir('%s/bin' % self.projectPath()):
+                    result, stdout = self.shell('cp -rP %s/bin "%s/usr/local/"' % (self.projectPath(),img_path))
+            if self.pathexists('%s/usr/bin/' % img_path):
+                path = '%s/usr/bin/*' % img_path
+                self.chmod(path, "+x")
+            if self.pathexists('%s/usr/local/bin/' % img_path):
+                path = '%s/usr/local/bin/*' % img_path
+                self.chmod(path, "+x")
+            if result:
+                if self.pathexists('%s/usr/local/bin/' % img_path):
+                    path = '%s/usr/local/bin/*' % img_path
+                    self.chmod(path, "+x")
+            if result:
+                if self.pathexists('%s/root/.ssh/id_rsa' % img_path):
+                    path = '%s/root/.ssh/id_rsa' % img_path
+                    self.chmod(path, "600")
+                if self.pathexists('%s/root/.ssh' % img_path) and result:
+                    path = '%s/root/.ssh/' % img_path
+                    self.chmod(path, "700")
+            self.hasUsr(self.pathexists('%s/usr/' % img_path))
+            self.hasRoot(self.pathexists('%s/root/' % img_path))
+            self.hasLib(self.pathexists('%s/lib/' % img_path))
+            self.hasLib64(self.pathexists('%s/lib64/' % img_path))
+            self.hasEtc(self.pathexists('%s/etc/' % img_path))
+            self.hasOpt(self.pathexists('%s/opt/' % img_path))
+            usrlib = '%s/usr/lib' % img_path
+            usrLocalBin = '%s/usr/local/lib' % img_path
+            lib = '%s/lib' % img_path
+            srcUsrlib = '%s/src/usr/lib' % dockerPath
+            srcLib = '%s/src/lib' % dockerPath
+            opt = '%s/src/opt' % dockerPath
+            if self.hasUsr():
+                self.__create_shortlink_so__(usrlib, srcUsrlib)
+                if self.pathexists(usrLocalBin):
+                    self.chmod(usrLocalBin, "+x")
+            if self.hasLib():
+                self.__create_shortlink_so__(lib, srcLib)
+            if self.hasRoot():
+                self.history_compress("root.tar.gz", currentframe().f_lineno)
+                os.chdir(img_path)
+                self.tar_compress("../target/root.tar.gz","root")
+            if self.hasUsr():
+                self.history_compress("usr.tar.gz", currentframe().f_lineno)
+                os.chdir(img_path)
+                self.tar_compress("../target/usr.tar.gz","usr")
+            if self.hasEtc():
+                self.history_compress("etc.tar.gz", currentframe().f_lineno)
+                os.chdir(img_path)
+                self.tar_compress("../target/etc.tar.gz","etc")
+            if self.hasLib():
+                self.history_compress("lib.tar.gz", currentframe().f_lineno)
+                os.chdir(img_path)
+                self.tar_compress("../target/lib.tar.gz","lib")
+            if self.hasLib64():
+                self.history_compress("lib64.tar.gz", currentframe().f_lineno)
+                os.chdir(img_path)
+                self.tar_compress("../target/lib64.tar.gz","lib64")
+                os.chdir(self.curPath())
+            if self.hasOpt():
+                self.history_compress("opt.tar.gz", currentframe().f_lineno)
+                os.chdir(img_path)
+                self.tar_compress("../target/opt.tar.gz","opt")
+        else :
+            self.criticalMsg("Dockerfile Not found", "DOCKERFILE")
+        return result
+
+    def __remove_container__(self, name):
+        cmd = ""
+        if self.is_mac():
+             cmd = "docker container rm -f %s" % name
+        elif self.sudo_test():
+            cmd = "sudo docker container rm -f %s" % name
+        if cmd != '':
+            self.cmd_history("# ** Remove Docker **", currentframe().f_lineno)
+            self.cmd_history(cmd)
+            result, stdout = self.shell(cmd, True)
+            if stdout != '':
+                print(stdout)
+        else :
+            self.criticalMsg("Using incompatible OS or not able to use sudo", "CLEAN FAILED")
+
+    def __restart__(self, name):
+        cmd = ""
+        if self.is_mac():
+             cmd = "docker container restart %s" % name
+        elif self.sudo_test():
+            cmd = "sudo docker container restart %s" % name
+        if cmd != '':
+            self.cmd_history("# ** Docker Command ** ", currentframe().f_lineno)
+            self.cmd_history(cmd)
+            result, stdout = self.shell(cmd, True)
+            if stdout != '':
+                print(stdout)
+        else :
+            self.criticalMsg("Using incompatible OS or not able to use sudo", "RESTART FAILED")
+
+    def __rm__(self, file):
+        file = re.sub("[/][/]", "/", file)
+        if self.pathexists(file):
+            rm = "rm -rf %s" % (file)
+            result, stdout = self.shell(rm)
+            if result:
+                self.infoMsg("File or folder: %s" % file, "REMOVED")
+
+    def __run__(self, dockerName, tag):
+        result = self.__check_config__()
+        if result:
+            self.__build__(tag)
+            overwritten = False
+            if self.check_container(dockerName):
+                self.safeMsg("Container: %s Found!" % dockerName , "EXISTS ALREADY")
+                if 'yes' == self.__ask_yesno__('Do you want to overwrite container? (yes/no) '):
+                    overwritten = True
+            else :
+                overwritten = True
+            if overwritten :
+                cmd = ''
+                dockerPath = ''
+                if self.osVersion() == 'macOS':
+                    dockerPath = "%s/Documents/dockers/%s" % (os.path.expanduser("~"),dockerName)                    
+                    cmd = "mkdir -p %s" % dockerPath
+                elif self.sudo_test():
+                    dockerPath = "/data/%s" % dockerName
+                    cmd = "sudo mkdir -p %s" % dockerPath
+                if cmd != '' :
+                    result, stdout = self.shell(cmd , True)
+                    self.__remove_container__(dockerName)
+                    params = ''
+                    for port in self.portMapping().split(','):
+                        port = port.strip()
+                        if port != '':
+                            params = '%s -p "0.0.0.0:%s/tcp"' % (params, port)
+                    if self.exposedPort() != '' and self.externalPort() != '':
+                        params = '%s -p "0.0.0.0:%s:%s/tcp" ' % (params, self.externalPort(), self.exposedPort())
+                    params = params + ' -v "%s:%s" ' % ( dockerPath, self.exposedVolume())
+                    if self.osVersion() == 'macOS':
+                        cmd = "docker run %s --name %s -d %s/%s:%s" % ( params, dockerName, self.maintainer(), self.projectName(),tag)
+                    else :
+                        cmd = "sudo docker run %s --name %s -d %s/%s:%s" % ( params, dockerName, self.maintainer(), self.projectName(),tag)
+                    self.cmd_history("# ** Docker Command ** ", currentframe().f_lineno)
+                    self.cmd_history(cmd)
+                    result, stdout = self.shell(cmd)
+                else :
+                    result = False
+                    self.criticalMsg("Using incompatible OS or not able to use sudo", "CLEAN FAILED")
+        if result: 
+            self.safeMsg("Command 'run' executed!", "SUCCESS")
+
+    def component(self, component=None):
+        if component is not None:
+            self.__component__=component
+            return self
+        elif not hasattr(self,'__component__'):
+            self.__component__=''
+        return self.__component__
+
+    def configFile(self, configFile=None):
+        if configFile is not None:
+            self.__configFile__=configFile
+            return self
+        elif not hasattr(self,'__configFile__'):
+            self.__configFile__=''
+        return self.__configFile__
+
+    def dockerName(self, dockerName=None):
+        if dockerName is not None:
+            self.__dockerName__=dockerName
+            return self
+        elif not hasattr(self, '__dockerName__'):
+            self.__dockerName__=''
+        return self.__dockerName__
+
+    def dockerPath(self, dockerPath=None):
+        if dockerPath is not None:
+            self.__dockerPath__=dockerPath
+            return self
+        elif not hasattr(self,'__dockerPath__'):
+            self.__dockerPath__=""
+            arch = self.arch()
+            if arch == 'arm64':
+                arch = 'aarch64'
+            targetOS = re.sub(':','-',self.targetOS())
+            if self.pathexists('%s/%s-%s/Dockerfile' % (self.projectPath(),targetOS,arch)):
+                self.safeMsg("Location of the Dockerfile is: %s/%s-%s" % (self.projectPath(),targetOS,arch),"DOCKER PATH")
+                self.__dockerPath__='%s/%s-%s' % (self.projectPath(),targetOS,arch)
+            elif self.pathexists('%s/%s/Dockerfile' % (self.projectPath(),arch)):
+                self.__dockerPath__='%s/%s' % (self.projectPath(),arch)
+            elif  self.pathexists('%s/Dockerfile' % self.projectPath()) :
+                self.__dockerPath__=self.projectPath()
+            if self.__dockerPath__ != '':
+                self.imagePath('%s/docker-image' % self.__dockerPath__)
+        return self.__dockerPath__
+
+    def exposedPort(self, exposedPort=None):
+        if exposedPort is not None:
+            self.__exposedPort__=exposedPort
+            return self
+        elif not hasattr(self, '__exposedPort__'):
+            self.__exposedPort__=''
+        return self.__exposedPort__
+
+    def exposedVolume(self, exposedVolume=None):
+        if exposedVolume is not None:
+            self.__exposedVolume__=exposedVolume
+            return self
+        elif not hasattr(self, '__exposedVolume__'):
+            self.__exposedVolume__=''
+        return self.__exposedVolume__
+
+    def externalPort(self, externalPort=None):
+        if externalPort is not None:
+            self.__externalPort__=externalPort
+            return self
+        elif not hasattr(self, '__externalPort__'):
+            self.__externalPort__=''
+        return self.__externalPort__
+
+    def getDockerName(self):
+        self.__collect_container__()
+        choice = []
+        dockerList = []
+        index = 1
+        for p in self.__containers__:
+            sp=re.sub(r"\s+.+","",re.sub(r"^[a-z0-9]+\s+","",p))
+            dk= re.sub(r"\s+.+","",p)
+            if sp != "" and sp != "CONTAINER":
+                choice.append("%6d) %s (%s)" % (index, sp, dk))
+                dockerList.append(dk)
+                index += 1
+        self.prn("Please choose the following by typing the number (type 'exit' to exit): ")
+        self.prn("\n".join(choice))
+        self.prn("  type 'exit' to exit")
+        num = self.ask_choose_profile_number()
+        if num == -1 :
+            exit()
+        while num<1 or num >= index:
+            num = self.ask_choose_profile_number()
+            if num == -1 :
+                return ""
+        return dockerList[num - 1]
+
+    def hasEtc(self, hasEtc=None):
+        if hasEtc is not None:
+            self.__hasEtc__=hasEtc
+            return self
+        elif not hasattr(self, '__hasEtc__'):
+            self.__hasEtc__=False
+        return self.__hasEtc__
+
+    def hasLib(self, hasLib=None):
+        if hasLib is not None:
+            self.__hasLib__=hasLib
+            return self
+        elif not hasattr(self, '__hasLib__'):
+            self.__hasLib__=False
+        return self.__hasLib__
+
+    def hasLib64(self, hasLib64=None):
+        if hasLib64 is not None:
+            self.__hasLib64__=hasLib64
+            return hasLib64
+        elif not hasattr(self, '__hasLib64__'):
+            self.__hasLib64__=False
+        return self.__hasLib64__
+
+    def hasOpt(self, hasOpt=None):
+        if hasOpt is not None:
+            self.__hasOpt__=hasOpt
+            return self
+        elif not hasattr(self, '__hasOpt__'):
+            self.__hasOpt__=False
+        return self.__hasOpt__
+
+    def hasRoot(self, hasRoot=None):
+        if hasRoot is not None:
+            self.__hasRoot__=hasRoot
+            return self
+        elif not hasattr(self, '__hasRoot__'):
+            self.__hasRoot__=False
+        return self.__hasRoot__
+
+    def hasUsr(self, hasUsr=None):
+        if hasUsr is not None:
+            self.__hasUsr__=hasUsr
+            return self
+        elif not hasattr(self, '__hasUsr__'):
+            self.__hasUsr__=False
+        return self.__hasUsr__
+
+    def imagePath(self, imagePath=None):
+        if imagePath is not None:
+            self.__imagePath__=imagePath
+            return self
+        elif not hasattr(self, '__imagePath__'):
+            self.__imagePath__=''
+        return self.__imagePath__
+
+    def maintainer(self, maintainer=None):
+        if maintainer is not None:
+            self.__maintainer__=maintainer
+            return self
+        elif not hasattr(self,'__maintainer__'):
+            self.__maintainer__=''
+        return self.__maintainer__
+
+    def maintainerEmail(self, maintainerEmail=None):
+        if maintainerEmail is not None:
+            self.__maintainerEmail__=maintainerEmail
+            return self
+        elif not hasattr(self, '__maintainerEmail__'):
+            self.__maintainerEmail__=''
+        return self.__maintainerEmail__
+
+    def mkdir_localInstallFolder(self):
+        os.mkdir(self.localInstallFolder())
+
+    def output(self, output=None):
+        if output is not None:
+            self.__output__=output
+            return self
+        elif not hasattr(self, '__output__'):
+            self.__output__=''
+        return self.__output__
+
+    def portMapping(self, portMapping=None):
+        if portMapping is not None:
+            self.__portMapping__=portMapping
+            return self
+        elif not hasattr(self, '__portMapping__'):
+            self.__portMapping__=''
+        return self.__portMapping__
+
+    def profile(self, profile=None):
+        if profile is not None:
+            self.__profile__=profile
+            return profile
+        elif not hasattr(self, '__profile__'):
+            self.__profile__='Default'
+        return self.__profile__
+
+    def projectName(self, projectName=None):
+        if projectName is not None:
+            self.__projectName__=projectName
+            return self
+        elif not hasattr(self,'__projectName__'):
+            self.__projectName__=''
+        return self.__projectName__
+
+    def projectPath(self, projectPath=None):
+        if projectPath is not None:
+            self.__projectPath__=projectPath
+            return self
+        elif not hasattr(self, '__projectPath__'):
+            self.__projectPath__=''
+        return self.__projectPath__
+
+    def requisite(self):
+        if self.is_debian():
+            result = self.install_docker_io()
+            result = self.install_containerd()
+            result = self.install_runc()
+
+    def targetOS(self, targetOS=None):
+        if targetOS is not None:
+            self.__targetOS__=targetOS
+            return self
+        elif not hasattr(self, '__targetOS__'):
+            self.__targetOS__='alpine:3.16'
+        return self.__targetOS__
+
+    def testProfile(self, testProfile=None):
+        if testProfile is not None:
+            self.__testProfile__=testProfile
+            return self
+        elif not hasattr(self, '__testProfile__'):
+            self.__testProfile__=False
+        return self.__testProfile__
+
+    def start(self):
+        self.allowInstallLocal(True).allowDisplayInfo(False)
+        self.usage("attach|build|container|clean-image|exec|image|ls|rm|run|self-install")
+        if not self.parseArgs():
+            if len(sys.argv) > 1:
+                shortSwitch = []
+                longSwitch = []
+                for a in sys.argv:
+                    if a.startswith( '---' ):
+                        pass
+                    elif a.startswith( '--' ):
+                        if a.startswith( '--profile:' ):
+                            b = a.split( ':' )
+                            if b[1].strip() != '':
+                                self.profile(b[1].strip().lower().title())
+                            longSwitch.append('--profile')
+                        elif a.startswith( '--output:' ):
+                            b = a.split( ':' )
+                            if b[1].strip() != '':
+                                self.output(b[1].strip())
+                            longSwitch.append('--output')
+                        elif a.startswith( '--component:' ):
+                            b = a.split( ':' )
+                            if b[1].strip() != '':
+                                self.component(b[1].strip())
+                            longSwitch.append('--component')
+                        else :
+                            longSwitch.append(a)
+                    elif a.startswith('-'):
+                        if a.startswith('-p:'):
+                            b = a.split(':')
+                            if b[1].strip() != '':
+                                self.profile(b[1].strip().lower().title())
+                            shortSwitch.append('-p')
+                        elif a.startswith('-o:'):
+                            b = a.split(':')
+                            if b[1].strip() != '':
+                                self.output(b[1].strip())
+                            shortSwitch.append('-o')
+                        elif a.startswith('-c:'):
+                            b = a.split(':')
+                            if b[1].strip() != '':
+                                self.component(b[1].strip())
+                            shortSwitch.append('-c')
+                        else :
+                            shortSwitch.append(a)
+                    elif a.startswith('./') or a.startswith('../') or a.startswith('/') or a.endswith('d-master') :
+                        pass
+                    else :
+                        self.cmd_list(a)
+                if '--test' in longSwitch or '-t' in shortSwitch:
+                    self.testProfile(True)
+                if len(self.cmd_list()) > 0:
+                    self.cmd(str(self.cmd_list()[0]))
+                    arch = self.arch()
+                else :
+                    self.cmd('')
+                if self.cmd() == 'build':
+                    result = self.__check_config__()
+                    if result:
+                        if self.testProfile():
+                            tag = "-test" % self.tag()
+                        else:
+                            tag = self.tag()
+                        self.__build__(tag)
+                    return True
+                elif self.cmd() == "clean-image" or self.cmd() == "clean-images":
+                    self.__clean_image__()
+                    return True
+                elif self.cmd() == 'container' or self.cmd() == 'containers' :
+                    self.__container_ls__()
+                    self.cmd_history_print()
+                    return True
+                elif self.cmd() == 'exec':
+                    result = self.__check_config__()
+                    dockerName = ""
+                    if result:
+                        self.safeMsg('Using profile: "%s". Architecture: "%s".' % (self.profile(),arch),'PROFILE')
+                        if self.testProfile():
+                            tag = '%s-test' % self.tag()
+                            dockerName = '%s-test' % self.dockerName()
+                        else:
+                            dockerName = self.dockerName()
+                            tag = self.tag()
+                        if not self.check_container(dockerName):
+                            self.__run__(dockerName, tag)
+                    else:
+                        dockerName=self.getDockerName()
+                    if dockerName !="":
+                        self.__exec__(dockerName, display_history=True)
+                    return True
+                elif self.cmd() == 'attach':
+                    result = self.__check_config__()
+                    if result:
+                        self.safeMsg('Using profile: "%s". Architecture: "%s".' % (self.profile(),arch),'PROFILE')
+                        if self.testProfile():
+                            tag = '%s-test' % self.tag()
+                            dockerName = '%s-test' % self.dockerName()
+                        else:
+                            dockerName = self.dockerName()
+                            tag = self.tag()
+                        if not self.check_container(dockerName):
+                            self.__run__(dockerName, tag)
+                        self.__attach__(dockerName, display_history=True)
+                    return True
+                elif self.cmd() == 'image' or self.cmd() == 'images':
+                    self.__image_ls__()
+                    self.cmd_history_print()
+                    return True
+                elif self.cmd() == 'ls':
+                    result = self.__check_config__(display_list=True)
+                    return True
+                elif self.cmd() == 'os':
+                    self.safeMsg("OS = %s" % self.osVersion(),"INFO")
+                elif self.cmd() == 'rm':
+                    if len(self.cmd_list())>1:
+                        id = str(self.cmd_list()[1])
+                        cmd = ''
+                        cmdDone = False
+                        if self.is_mac():
+                            cmd = "docker image ls" 
+                            cmd2 = "docker image rm -f %s" % id 
+                            cmd3 = "docker container ls --all" 
+                            cmd4 = "docker container rm -f %s" % id 
+                        elif self.sudo_test():
+                            cmd = "sudo docker image ls"
+                            cmd2 = "sudo docker image rm -f %s" % id
+                            cmd3 = "sudo docker container ls --all" 
+                            cmd4 = "sudo docker container rm -f %s" % id 
+                        if cmd != '' :
+                            result, stdout = self.shell(cmd, True)
+                            if stdout != '':
+                                for l in stdout.split('\n'):
+                                    if id in l:
+                                        if not cmdDone:
+                                            cmdDone = True
+                                            result, stdout = self.shell(cmd2)
+                                            if result:
+                                                pass
+                            if not cmdDone:
+                                result, stdout = self.shell(cmd3, True)
+                                for l in stdout.split('\n'):
+                                    if id in l:
+                                        if not cmdDone:
+                                            cmdDone = True
+                                            result, stdout = self.shell(cmd4)
+                                            if result:
+                                                pass
+                        self.cmd_history_print()
+                    else :
+                        result = self.__check_config__()
+                        if result:
+                            self.safeMsg('Using profile: "%s". Architecture: "%s".' % (self.profile(),arch),'PROFILE')
+                            if self.testProfile():
+                                self.__remove_container__('%s-test' % self.dockerName())
+                            else:
+                                self.__remove_container__(self.dockerName())
+                            self.cmd_history("# ** Remove temporary folder **", currentframe().f_lineno)
+                            dockerPath=self.dockerPath()
+                            if dockerPath !="":
+                                self.removeFolder("%s/docker-image" % dockerPath, use_history=True)
+                                self.removeFolder("%s/target" % dockerPath, use_history=True)
+                                self.removeFolder("%s/repo" % dockerPath, use_history=True)
+                            self.cmd_history_print()
+                    return True
+                elif self.cmd() == 'restart':
+                    result = self.__check_config__()
+                    if result:
+                        self.safeMsg('Using profile: "%s". Architecture: "%s".' % (self.profile(),arch),'PROFILE')
+                        if self.testProfile():
+                            dockerName = '%s-test' % self.dockerName()
+                        else:
+                            dockerName = self.dockerName()
+                        self.__restart__(dockerName)
+                    return True
+                elif self.cmd() == 'run':
+                    result = self.__check_config__()
+                    if result:
+                        self.safeMsg('Using profile: "%s". Architecture: "%s".' % (self.profile(),arch),'PROFILE')
+                        if self.testProfile():
+                            dockerName = '%s-test' % self.dockerName()
+                            tag = "%s-test" % self.tag()
+                        else:
+                            dockerName = self.dockerName()
+                            tag = self.tag()
+                        self.__run__(dockerName, tag)
+                    return True
+                else:
+                    self.msg_unknown_parameter()
+            else:
+                self.msg_info()
+
+if __name__ == "__main__":
+    app = DockerBase(__file__)
+    app.setInstallation(appName='d-master',author='Cloudgen Wong',homepage="https://github.com/cloudgen2/d-master",downloadUrl="https://dl.leolio.page/d-master",lastUpdate='2024-1-22',majorVersion=13,minorVersion=22)
     app.start()
