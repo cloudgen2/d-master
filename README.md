@@ -4,7 +4,7 @@
 
 You needed to install d-master before any operation, especially for building the docker image file:
 ```
-./d-master self-install
+./d-master self-install 
 ```
 
 ## Build
