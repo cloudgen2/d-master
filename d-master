@@ -100,6 +100,8 @@ class Sh(object):
                 self.__shell_cmd__ = '/bin/sh'
             elif os.path.exists('C:\\Windows\\System32\\cmd.exe'):
                 self.__shell_cmd__ = 'C:\\Windows\\System32\\cmd.exe'
+            elif os.path.exists('C:\\Program Files\\Git\\usr\\bin\\bash.exe'):
+                self.__shell_cmd__ = 'C:\\Program Files\\Git\\usr\\bin\\bash.exe'
             else:
                 self.__shell_cmd__=''
         return self.__shell_cmd__
@@ -117,98 +119,6 @@ class Sh(object):
         if pwd is None:
             return os.getlogin()
         return pwd.getpwuid(self.userID())[0]
-
-class Which(Sh):
-
-    def which(self):
-        if self.isCmd()  or self.isGitBash():
-            if self.pathexists(self.localInstallPath()):
-                return self.localInstallPath()
-            elif self.pathexists(self.globalInstallPath(0)):
-                return self.globalInstallPath(0)
-            elif self.pathexists(self.globalInstallPath(1)):
-                return self.globalInstallPath(1)
-            elif self.pathexists('C:\\Windows\\System32\\where.exe'):
-                return self.where_cmd( self.appName())
-        else:
-            if self.pathexists(self.localInstallPath()):
-                return self.localInstallPath()
-            elif self.pathexists(self.globalInstallPath(0)):
-                return self.globalInstallPath(0)
-            elif self.pathexists(self.globalInstallPath(1)):
-                return self.globalInstallPath(1)
-            if self.pathexists('/usr/bin/which'):
-                return self.which_cmd( self.appName())
-
-    def which_cmd(self, cmd, default=""):
-        stdout = ''
-        if "/" in cmd:
-            cmd= cmd.split("/")[-1]
-        if "\\" in cmd:
-            cmd= cmd.split("\\")[-1]
-        if self.isCmd() or self.isGitBash():
-            return self.where_cmd(cmd)
-        elif self.isLinuxShell():
-            if os.path.exists('/bin/%s' % cmd):
-                return '/bin/%s' % cmd
-            elif os.path.exists('/sbin/%s' % cmd):
-                return '/sbin/%s' % cmd
-            elif os.path.exists('/usr/bin/%s' % cmd):
-                return '/usr/bin/%s' % cmd
-            elif os.path.exists('/usr/bin/local/%s' % cmd):
-                return '/usr/bin/local/%s' % cmd
-            elif os.path.exists('/usr/sbin/%s' % cmd):
-                return '/usr/sbin/%s' % cmd
-            elif os.path.exists('/home/%s/.local/bin/%s' % (self.username(), cmd)):
-                return '/home/%s/.local/bin/%s' % (self.username(), cmd)
-            elif os.path.exists('/usr/bin/which'):
-                result, stdout = self.shell("/usr/bin/which %s" % cmd, ignoreErr=True)
-                return stdout.strip()
-            elif os.path.exists('/bin/which'):
-                result, stdout = self.shell("/usr/bin/which %s" % cmd, ignoreErr=True)
-                return stdout.strip()
-            elif 'PATH' in os.environ:
-                split_path = os.environ['PATH'].split(':')
-                for pathlet in split_path:
-                    if os.path.exists('%s/%s' % (pathlet, cmd)):
-                        return '%s/%s' % (pathlet, cmd)
-        if default!="":
-            cmd=default
-        return cmd
-
-    def where_cmd(self, cmd, default=""):
-        stdout = ''
-        if self.isLinuxShell():
-            return self.which_cmd(cmd)
-        elif self.isCmd()  or self.isGitBash():
-            path = "C:\\Users\\%s\\AppData\\Local\\Microsoft\\WindowsApps\\%s" % (self.username(), cmd)
-            if os.path.exists('C:\\Windows\\system32\\%s' % cmd):
-                return 'C:\\Windows\\system32\\%s' % cmd
-            elif os.path.exists(path):
-                return path
-            elif 'PATH' in os.environ:
-                split_path = os.environ['PATH'].split(';')
-                for pathlet in split_path:
-                    if os.path.exists('%s\\%s' % (pathlet, cmd)):
-                        return '%s\\%s' % (pathlet, cmd)
-        if default != "":
-            cmd = default
-        return cmd
-
-    def which_journalctl(self):
-        return self.which_cmd('journalctl', '/usr/bin/journalctl')
-
-    def which_nginx(self):
-        return self.which_cmd('nginx', '/usr/sbin/nginx')
-
-    def which_rc_service(self):
-        return self.which_cmd('rc-service', '/sbin/rc-service')
-
-    def which_systemctl(self):
-        return self.which_cmd('systemctl','/usr/bin/systemctl')
-
-    def which_uname(self):
-        return self.which_cmd('uname', '/usr/bin/uname')
 
 class AppData(object):
 
@@ -560,7 +470,7 @@ class CmdHistory(MsgBase):
             history_list = '\n  '.join(history)
             self.infoMsg("%s\n  # ====== End at %s ...( %.3f second ) %s ======\n" % ( history_list, str(self.__tick__),self.__diff_time__, end_at), "COMMAND HISTORY")
 
-class Shell(CmdHistory, Which):
+class Shell(CmdHistory, Sh):
 
     def chdir(self, path, line_num=None):
         if self.isCmd() or self.isGitBash():
@@ -574,18 +484,19 @@ class Shell(CmdHistory, Which):
         if self.isCmd() or self.isGitBash():
             filePath=self.path_to_dos(filePath)
         if self.pathexists(filePath):
-            chmod_cmd = self.which_cmd('chmod')
+            chmod_cmd = self.which_cmd('chmod', "")
             cmd=""
-            if useSudo:
-                if self.sudo_cmd()!="":
-                    cmd = '%s %s %s %s' % (self.sudo_cmd(), chmod_cmd,switch,filePath)
-            else:                
-                cmd = '%s %s %s' % (chmod_cmd,switch,filePath)
-            if cmd=="":
-                return False                
-            if use_history:
-                self.cmd_history(cmd)
-            result, stdout = self.shell(cmd)
+            if chmod_cmd != "":
+                if useSudo:
+                    if self.sudo_cmd()!="":
+                        cmd = '%s %s %s %s' % (self.sudo_cmd(), chmod_cmd,switch,filePath)
+                else:                
+                    cmd = '%s %s %s' % (chmod_cmd,switch,filePath)
+                if cmd=="":
+                    return False                
+                if use_history:
+                    self.cmd_history(cmd)
+                result, stdout = self.shell(cmd)
             return result
         return False
 
@@ -609,6 +520,8 @@ class Shell(CmdHistory, Which):
         return False
     
     def chmod_x(self, filePath="", use_history=True, useSudo=False):
+        if self.is_windows():
+            return False
         return self.chmod(filePath=filePath, switch="+x", use_history=use_history, useSudo=useSudo)
 
     def comparePath(self, p1, p2):
@@ -631,10 +544,14 @@ class Shell(CmdHistory, Which):
 
     def cp(self, filePath1="", filePath2="", use_history=True, useSudo=False):
         cmd = ""
+        stdout = ""
         if self.isCmd() or self.isGitBash():
             filePath1=self.path_to_dos(filePath1)
             filePath2=self.path_to_dos(filePath2)
-            cmd = 'copy %s %s' % (filePath1,filePath2)
+            if "*" in filePath1:
+                cmd = 'xcopy %s %s /E' % (filePath1,filePath2)
+            else:
+                cmd = 'copy %s %s' % (filePath1,filePath2)
         else:
             cp = self.which_cmd('cp')
             if useSudo:
@@ -644,16 +561,10 @@ class Shell(CmdHistory, Which):
                 cmd = '%s %s %s' % (cp,filePath1,filePath2)
         if cmd=="":
             return False 
-        if useSudo:
-            self.shell(cmd, ignoreErr=True)
-        else:
-            shutil.copy(filePath1,filePath2) 
-        if self.pathexists(filePath1):
-            if use_history:
-                self.cmd_history(cmd)
-            result, stdout = self.shell(cmd)
-            return result
-        return False
+        if use_history:
+            self.cmd_history(cmd)
+        result, stdout = self.shell(cmd)
+        return result, stdout
 
     def create_group(self, groupname=None, user_id=None, group_id=None):
         cmd= "getent group %s" %  groupname
@@ -748,6 +659,7 @@ class Shell(CmdHistory, Which):
     def mkdir(self, path, sudo = False):
         if not self.pathexists( path ):
             if self.osVersion() == 'windows':
+                path=self.path_to_dos(path)
                 dir_split = path.split('\\')
                 dirloc = dir_split[0]
                 for dirlet in dir_split[1:]:
@@ -769,7 +681,7 @@ class Shell(CmdHistory, Which):
                         if not self.pathexists(dirloc):
                             try:
                                 if sudo:
-                                    self.shell(f"sudo mkdir -p {dirloc}")
+                                    self.shell("sudo mkdir -p %s" % dirloc)
                                 else:
                                     os.mkdir( dirloc )
                             except:
@@ -792,6 +704,7 @@ class Shell(CmdHistory, Which):
         if self.pathexists(filePath):
             if use_history:
                 if self.isCmd():
+                    filePath=self.path_to_dos(filePath)
                     cmd = 'del %s' % filePath
                 else:
                     rm = self.which_cmd('rm')
@@ -826,11 +739,11 @@ class Shell(CmdHistory, Which):
             dirPath=self.path_to_dos(dirPath)
         if self.pathexists(dirPath) and os.path.isdir(dirPath):
             if use_history:
-                self.cmd_history(f"rm -rf {dirPath}")
+                self.cmd_history("rm -rf %s" % dirPath)
             shutil.rmtree(dirPath)
         else:
             if use_history:
-                self.cmd_history(f"# folder {dirPath}: not found, cannot be removed.")
+                self.cmd_history("# folder %s: not found, cannot be removed." % dirPath)
 
     def remove_user(self, username=None):
         cmd= "id %s" % username
@@ -901,14 +814,17 @@ class Shell(CmdHistory, Which):
                 return True
             else:
                 return False
-        if stderr.strip().lower() == 'stdin is not a tty' and useWinpty:
-            stdout,stderr = Popen(pipe_array[1:],stdin=PIPE,stdout=PIPE,\
-                stderr=PIPE,universal_newlines=True).communicate('\n')
-        if stderr != "" and not ignoreErr:
-            self.msg_error(command, stderr)
-            return False, stderr
-        else:
-            return True, stdout
+        try:
+            if stderr.strip().lower() == 'stdin is not a tty' and useWinpty:
+                stdout,stderr = Popen(pipe_array[1:],stdin=PIPE,stdout=PIPE,\
+                    stderr=PIPE,universal_newlines=True).communicate('\n')
+            if stderr != "" and not ignoreErr:
+                self.msg_error(command, stderr)
+                return False, stderr
+            else:
+                return True, stdout
+        except:
+            return False, ""
 
     def ln(self, source="", target="", use_history=True, useSudo=False):
         if self.isCmd():
@@ -974,6 +890,8 @@ class Shell(CmdHistory, Which):
             stdout, stderr = Popen([ self.shellCmd() , '-c',"sudo echo %s" % msg ] \
                 ,stdin=PIPE,stdout=PIPE,stderr=PIPE,\
                 universal_newlines=True ).communicate( "%s\n" % sudoPassword )
+            if self.signal() == 2:
+                return False
             trial=trial + 1
         if trial < 3:
             self.is_sudo( True )
@@ -988,7 +906,7 @@ class Shell(CmdHistory, Which):
             elif useSudo or self.sudo_test():
                 if self.sudo_cmd() != "":
                     cmd = '%s %s -rf %s' % (self.sudo_cmd(), rm_cmd, filePath)
-            if cmd=="" :
+            if cmd=="" or self.signal == 3:
                 return False
             self.cmd_history(cmd)
             self.shell( cmd )
@@ -999,7 +917,9 @@ class Shell(CmdHistory, Which):
             tar = self.where_cmd('tar.exe')
         else:
             tar = self.which_cmd('tar')
-        if self.is_mac():
+        if self.is_mac() or self.is_window():
+            if self.isCmd():
+                fname = self.path_to_dos(fname)
             cmd= [tar,"--uid","0","--gid","0", "--no-same-owner","--no-same-permissions","-cvf", fname, path]
         else:
             cmd= [tar,"--owner=0", "--group=0", "--no-same-owner","--no-same-permissions","-cvf", fname, path]
@@ -1011,9 +931,103 @@ class Shell(CmdHistory, Which):
             tar = self.where_cmd('tar.exe')
         else:
             tar = self.which_cmd('tar')
+        if self.isCmd():
+            fname = self.path_to_dos(fname)        
         cmd= [tar,"-xvf", fname]
         self.cmd_history(" ".join(cmd))
         result, stdout = self.shell(cmd,ignoreErr=True,ignoreAll=True)
+
+    def which(self):
+        if self.isCmd()  or self.isGitBash():
+            if self.pathexists(self.localInstallPath()):
+                return self.localInstallPath()
+            elif self.pathexists(self.globalInstallPath(0)):
+                return self.globalInstallPath(0)
+            elif self.pathexists(self.globalInstallPath(1)):
+                return self.globalInstallPath(1)
+            elif self.pathexists('C:\\Windows\\System32\\where.exe'):
+                return self.where_cmd( self.appName())
+        else:
+            if self.pathexists(self.localInstallPath()):
+                return self.localInstallPath()
+            elif self.pathexists(self.globalInstallPath(0)):
+                return self.globalInstallPath(0)
+            elif self.pathexists(self.globalInstallPath(1)):
+                return self.globalInstallPath(1)
+            if self.pathexists('/usr/bin/which'):
+                return self.which_cmd( self.appName())
+
+    def which_cmd(self, cmd, default=""):
+        stdout = ''
+        origin_cmd = cmd
+        if "/" in cmd:
+            cmd= cmd.split("/")[-1]
+        if "\\" in cmd:
+            cmd= cmd.split("\\")[-1]
+        if self.isCmd() or self.isGitBash():
+            return self.where_cmd(cmd)
+        elif self.isLinuxShell():
+            if os.path.exists('/bin/%s' % cmd):
+                return '/bin/%s' % cmd
+            elif os.path.exists('/sbin/%s' % cmd):
+                return '/sbin/%s' % cmd
+            elif os.path.exists('/usr/bin/%s' % cmd):
+                return '/usr/bin/%s' % cmd
+            elif os.path.exists('/usr/bin/local/%s' % cmd):
+                return '/usr/bin/local/%s' % cmd
+            elif os.path.exists('/usr/sbin/%s' % cmd):
+                return '/usr/sbin/%s' % cmd
+            elif os.path.exists('/home/%s/.local/bin/%s' % (self.username(), cmd)):
+                return '/home/%s/.local/bin/%s' % (self.username(), cmd)
+            elif os.path.exists('/usr/bin/which'):
+                result, stdout = self.shell("/usr/bin/which %s" % cmd, ignoreErr=True)
+                return stdout.strip()
+            elif os.path.exists('/bin/which'):
+                result, stdout = self.shell("/usr/bin/which %s" % cmd, ignoreErr=True)
+                return stdout.strip()
+            elif 'PATH' in os.environ:
+                split_path = os.environ['PATH'].split(':')
+                for pathlet in split_path:
+                    if os.path.exists('%s/%s' % (pathlet, cmd)):
+                        return '%s/%s' % (pathlet, cmd)
+        if cmd==origin_cmd:
+            cmd=default
+        return cmd
+
+    def where_cmd(self, cmd, default=""):
+        stdout = ''
+        origin_cmd = cmd
+        if self.isLinuxShell():
+            return self.which_cmd(cmd)
+        elif self.isCmd()  or self.isGitBash():
+            path = "C:\\Users\\%s\\AppData\\Local\\Microsoft\\WindowsApps\\%s" % (self.username(), cmd)
+            if os.path.exists('C:\\Windows\\system32\\%s' % cmd):
+                return 'C:\\Windows\\system32\\%s' % cmd
+            elif os.path.exists(path):
+                return path
+            elif 'PATH' in os.environ:
+                split_path = os.environ['PATH'].split(';')
+                for pathlet in split_path:
+                    if os.path.exists('%s\\%s' % (pathlet, cmd)):
+                        return '%s\\%s' % (pathlet, cmd)
+        if cmd==origin_cmd:
+            cmd=default
+        return cmd
+
+    def which_journalctl(self):
+        return self.which_cmd('journalctl', '/usr/bin/journalctl')
+
+    def which_nginx(self):
+        return self.which_cmd('nginx', '/usr/sbin/nginx')
+
+    def which_rc_service(self):
+        return self.which_cmd('rc-service', '/sbin/rc-service')
+
+    def which_systemctl(self):
+        return self.which_cmd('systemctl','/usr/bin/systemctl')
+
+    def which_uname(self):
+        return self.which_cmd('uname', '/usr/bin/uname')
 
 class AppHistory(Shell):
 
@@ -1078,7 +1092,7 @@ class AppHistory(Shell):
         self.cmd_history("# ** Try to check and modify ~/.zshenv **", line_num)
 
     def history_compress(self, target_file, line_num=None):
-        self.cmd_history(f"# ** Trying to create compressed file {target_file} for container **", currentframe().f_lineno)
+        self.cmd_history("# ** Trying to create compressed file %s for container **" % target_file, line_num)
 
     def history_create_soft_link(self, line_num=None):
         self.cmd_history("# ** Try to create soft link **", line_num)
@@ -1120,7 +1134,7 @@ class AppHistory(Shell):
         self.cmd_history("# ** Try to remove downloaded file **", line_num)
 
     def history_remove_folder(self, folder, line_num=None):
-        self.cmd_history(f"# ** Try to remove folder: {folder} **", line_num)
+        self.cmd_history("# ** Try to remove folder: %s **" % folder, line_num)
 
     def history_remove_previous_global(self, line_num=None):
         self.cmd_history("# ** Try to remove previous installed global version **", line_num)
@@ -1229,8 +1243,11 @@ class OS(AppHistory):
                 self.pythonName( "pypy3")
             else:
                 self.pythonName( "pypy" )
-        if platform.libc_ver()[0]!='':
+        try:
+            if platform.libc_ver()[0]!='':
                 self.libcName( platform.libc_ver()[0] )
+        except:
+            self.libcName("Most probably MSC (version unknow)")
         if 'AMD64' in gcc:
             self.__arch__ = 'amd64'
             if 'MSC' in gcc:
@@ -1273,6 +1290,9 @@ class OS(AppHistory):
 
     def is_mint(self):
         return self.osVersion().startswith('Linux Mint')
+
+    def is_window(self):
+        return self.osVersion()=='windows'
 
     def is_ubuntu(self):
         return self.osVersion().startswith('Ubuntu')
@@ -1365,6 +1385,21 @@ class OS(AppHistory):
             if result:
                 self.__distro__ = stdout.strip()
         return self.__distro__
+
+    def pythonVersion(self, version=None):
+        if version is not None:
+            self.__python_version__ = version.strip()
+            return self
+        elif  hasattr(self, '__python_version__'):
+            return self.__python_version__ 
+        self.__python_version__ = sys.version
+        if len(self.__python_version__.split('\n'))>1:
+            self.__python_version__ =  self.__python_version__.split('\n')[0].strip()
+        if len( self.__python_version__.split('['))>1:
+            self.__python_version__ =  self.__python_version__.split('[')[0].strip()
+        if len( self.__python_version__.split('('))>1:
+            self.__python_version__ =  self.__python_version__.split('(')[0].strip()
+        return self.__python_version__
 
     def root_or_sudo(self):
         if not hasattr(self, '__history_check_root__'):
@@ -1513,7 +1548,7 @@ class AppMsg(OS):
             '    "%s"' % self.homepage(),
             '',
             'Installation command:',
-            '    curl -fsSL %s|%s' % (self.downloadUrl(), python_exe),
+            '    curl -fsSL %s | %s' % (self.downloadUrl(), python_exe),
             ''
         ]
         starLine=[]
@@ -1685,7 +1720,7 @@ class AppMsg(OS):
             self.prn("    Python Executable: %s" % self.executable())
             self.prn("    python2 location: %s" % self.python2())
             self.prn("    python3 location: %s" % self.python3())
-            self.prn("    conda location: %s" % self.which_cmd('conda'))
+            self.prn("    conda location: %s" % self.which_cmd('conda', default=""))
             self.prn("    Inside docker container: %s" % self.is_docker_container())
             self.prn("    Cython String: %s" % self.cythonVersion())
             self.prn("    Binary Type: %s" % self.binaryVersion() )
@@ -1736,15 +1771,15 @@ class Installer(OS):
         if not hasattr(self, '__python_checked__'):
             self.__python_checked__=True
             self.cmd_history("# ** Checking python version  **",currentframe().f_lineno)
-        python2 = self.which_cmd("python2")
-        python3 = self.which_cmd("python3")
+        python2 = self.which_cmd("python2",default="")
+        python3 = self.which_cmd("python3",default="")
         arch = 'x86_64'
         if self.arch() == 'amd64':
             arch = 'x86_64'
         if python2 == '' or python3 == '':
             python = self.which_cmd("python")
             if python != "":
-                result , stdout = self.shell(f"{python} --version")
+                result , stdout = self.shell("%s --version" % python)
                 if result:
                     id_array = stdout.strip().split(' ')
                     if len(id_array) > 1:
@@ -1755,29 +1790,29 @@ class Installer(OS):
                         elif int(version) == 3 and python3=='':
                             python3 = python
                         if self.is_mac():
-                            self.__cython_version__=f"cpython-{version_array[0]}{version_array[1]}-darwin"
+                            self.__cython_version__="cpython-%s%s-darwin" % (version_array[0], version_array[1])
                         else:
-                            self.__cython_version__=f"cpython-{version_array[0]}{version_array[1]}-{arch}-linux-gnu"
+                            self.__cython_version__="cpython-%s%s-%s-linux-gnu" % (version_array[0], version_array[1], arch)
         self.__python2__ = python2
         self.__python3__ = python3
         if python2!="" and not hasattr(self, '__python2_found__'):
             self.__python2_found__ = True
-            self.cmd_history(f"  # python2 found: {self.python2()}")
+            self.cmd_history("  # python2 found: %s" % self.python2())
         if python3!="" and  not hasattr(self, '__python3_found__'):
             self.__python3_found__ = True
-            self.cmd_history(f"  # python3 found: {self.python3()}")
+            self.cmd_history("  # python3 found: %s" % self.python3())
         if not hasattr(self,"__cython_version__"):
             self.__cython_version__=""
             if self.__python3__ != "":
-                result , stdout = self.shell(f"{self.__python3__} --version")
+                result , stdout = self.shell("%s --version" % self.__python3__)
                 if result:
                     id_array = stdout.strip().split(' ')
                     if len(id_array) > 1:
                         version_array = id_array[1].split(".")
                         if self.is_mac():
-                            self.__cython_version__=f"cpython-{version_array[0]}{version_array[1]}-darwin"
+                            self.__cython_version__="cpython-%s%s-darwin" % (version_array[0], version_array[1])
                         else:
-                            self.__cython_version__=f"cpython-{version_array[0]}{version_array[1]}-{arch}-linux-gnu"
+                            self.__cython_version__="cpython-%s%s-%s-linux-gnu" % (version_array[0], version_array[1], arch)
         self.__python_checked__ = True
 
     def install(self, this, verbal=False):
@@ -1853,7 +1888,7 @@ class Installer(OS):
                     self.history_package_exists(package, currentframe().f_lineno)
                     checkPath= True
                 if self.which_cmd(path):
-                    self.cmd_history(f"ls {self.which_cmd(path)}")
+                    self.cmd_history("ls %s" % self.which_cmd(path))
                     checkPath=True
             elif isinstance(path,list):
                 for l in path:
@@ -1861,7 +1896,7 @@ class Installer(OS):
                         self.history_package_exists(package, currentframe().f_lineno)
                         checkPath= True
                     if self.which_cmd(l):
-                        self.cmd_history(f"ls {self.which_cmd(l)}")
+                        self.cmd_history("ls %s" % self.which_cmd(l))
                         self.history_package_exists(package, currentframe().f_lineno)
                         checkPath=True
         if checkPath:
@@ -1928,28 +1963,28 @@ class Installer(OS):
     def install_python_dev(self):
         if self.python2() != '':
             if self.is_alpine():
-                self.install_package('python2-dev')
+                self.install_package('python2-dev','/usr/bin/python3-config')
             elif self.is_debian():
-                self.install_package('python-dev')
+                self.install_package('python-dev','/usr/bin/python3-config')
             elif self.is_fedora():
-                self.install_package('python2-devel')
+                self.install_package('python2-devel','/usr/bin/python3-config')
             elif self.is_redhat():
-                self.install_package('python-devel')    
+                self.install_package('python-devel','/usr/bin/python3-config')
             elif self.is_opensuse():
-                self.install_package('python-devel')
+                self.install_package('python-devel','/usr/bin/python3-config')
             else:
-                self.install_package('python-devel')
+                self.install_package('python-devel','/usr/bin/python3-config')
         if self.python3() != '':
             if self.is_alpine():
-                self.install_package('python3-dev')
+                self.install_package('python3-dev','/usr/bin/python3-config')
             elif self.is_debian():
-                self.install_package('python3-dev')
+                self.install_package('python3-dev','/usr/bin/python3-config')
             elif self.is_fedora():
-                self.install_package('python3-devel')
+                self.install_package('python3-devel','/usr/bin/python3-config')
             elif self.is_redhat():
-                self.install_package('python3-devel')
+                self.install_package('python3-devel','/usr/bin/python3-config')
             elif self.is_opensuse():
-                self.install_package('python3-devel')
+                self.install_package('python3-devel','/usr/bin/python3-config')
             else:
                 self.install_package('pytho3-devel')
         if self.python3() == '' and self.python2() == '':
@@ -2049,6 +2084,12 @@ class Installer(OS):
         elif self.is_mac():
             self.download_get_install_pip()
             return True
+        elif self.is_window():
+            if self.pathexists('c:\\Program Files\\Python312\\Scripts\\pip3.exe'):
+                return True
+            elif self.pathexists('c:\\User\\%s\\AppData\\Local\\Microsoft\\WindowsApps\\pip3.exe' % self.username()):
+                return True
+            return False
         else:
             result = self.install_package('python3-pip', ['/usr/bin/pip3','/usr/local/bin/pip3'])
         return result
@@ -2141,21 +2182,6 @@ class Installer(OS):
         if not hasattr(self, "__cython_version__"):
             self.check_python()
         return self.__cython_version__
-
-    def pythonVersion(self, version=None):
-        if version is not None:
-            self.__python_version__ = version.strip()
-            return self
-        elif  hasattr(self, '__python_version__'):
-            return self.__python_version__ 
-        self.__python_version__ = sys.version
-        if len(self.__python_version__.split('\n'))>1:
-            self.__python_version__ =  self.__python_version__.split('\n')[0].strip()
-        if len( self.__python_version__.split('['))>1:
-            self.__python_version__ =  self.__python_version__.split('[')[0].strip()
-        if len( self.__python_version__.split('('))>1:
-            self.__python_version__ =  self.__python_version__.split('(')[0].strip()
-        return self.__python_version__
 
     def rc_update(self, package):
         self.history_check_rc_update(currentframe().f_lineno)
@@ -2289,8 +2315,8 @@ class Installer(OS):
                 shutil.copytree(backup_source, backup_destination)
             else:
                 self.mkdir(backup_destination, sudo=True)
-                self.shell(f"sudo cp -rP {backup_source}/* {backup_destination}")
-            self.cmd_history(f"sudo cp -rP {backup_source}/* {backup_destination}")
+                self.shell("sudo cp -rP %s/* %s" % (backup_source,backup_destination))
+            self.cmd_history("sudo cp -rP %s/* %s" % (backup_source,backup_destination))
         result = self.uninstall_package('nginx', ['/usr/sbin/nginx','/usr/bin/nginx'])
         return result
 
@@ -2477,7 +2503,10 @@ class Ask(FromPipe):
         # fromPipe() usually involve from curl and don't have stdin
         if self.fromPipe():
             return None
-        return self.__ask_number__('Choose the profile number? ')
+        number = self.__ask_number__('Choose the profile number? ')
+        if number is None:
+            return -1
+        return number
 
     def ask_create_ini(self):
         # fromPipe() usually involve from curl and don't have stdin
@@ -2530,11 +2559,11 @@ class Ask(FromPipe):
         return self.__signal__
 
     def signal_handler(self, sig, frame):
+        self.signal(sig)
         if sig == 2:
             self.prn('\nYou pressed Ctrl+C!\nPress Enter to Leave!')
         if sig == 3:
-            self.prn('\nYou pressed Ctrl+\!')
-        self.signal(sig)
+            self.prn('\nYou pressed Ctrl+\\!')
 
 class ShellProfile(Shell):
 
@@ -2732,8 +2761,8 @@ class Curl(Shell):
                             return False
         return result
 
-class Temp(Shell):
-
+class Temp(AppHistory):
+    # Class Required: CmdHistory, MsgBase, Which, Sh, Shell, AppData, AppHistory
     def tempFile(self, appName=None):
         if appName is None:
             appName = self.appName()
@@ -2753,16 +2782,17 @@ class Temp(Shell):
         if not hasattr(self,'__temp_checked__'):
             self.__temp_checked__=0
             self.history_check_mkdir(currentframe().f_lineno)
-        if self.isGitBash():
+        if "TEMP" in os.environ:
+            # in windows, most likely
+            folder=os.environ["TEMP"]
+        elif self.isGitBash():
             folder="/C/Users/%s/AppData/Local/Temp" % self.username()
         elif self.isCmd():
             folder="C:\\Users\\%s\\AppData\\Local\\Temp" % self.username()
-        elif 'TEMP' in os.environ:
-            folder=os.environ['TEMP']
-        elif self.username() == 'root':
-            folder="/tmp" 
         elif self.osVersion() == 'macOS':
             folder = '/Users/%s/Library/Caches' % self.username()
+        elif self.username() == 'root':
+            folder="/tmp" 
         else:
             folder="/home/%s/.local/temp" % self.username()
         if self.__temp_checked__<1:
@@ -2779,7 +2809,7 @@ class Temp(Shell):
         return ""
 
 class AppBase(Installer, AppPara, Ask, ShellProfile, FromPipe, AppMsg, Curl, Temp):
-    VERSION="1.10"
+    VERSION="1.13"
 
     __here__ = __file__
 
@@ -2842,7 +2872,8 @@ class AppBase(Installer, AppPara, Ask, ShellProfile, FromPipe, AppMsg, Curl, Tem
                             self.history_copy_static_lib(self.thisFile(), currentframe().f_lineno)
                             self.cp(self.thisFile(), self.globalInstallPath(1), useSudo=True)
                     else:
-                        self.msg_sudo_failed()
+                        if self.signal() != 2:
+                            self.msg_sudo_failed()
                         result = False
         else:
             self.removeGlobalInstaller()
@@ -2871,6 +2902,8 @@ class AppBase(Installer, AppPara, Ask, ShellProfile, FromPipe, AppMsg, Curl, Tem
                     return self.__self_install__(this=self.thisFile(), verbal=verbal, sudo=True)
                 else:
                     return self.__self_install__(this=self.thisFile(), verbal=verbal, sudo=True)
+            elif self.signal() == 2:
+                return False
         elif self.username() != 'root':
             self.msg_root_continue()
             return False
@@ -3073,15 +3106,9 @@ class AppBase(Installer, AppPara, Ask, ShellProfile, FromPipe, AppMsg, Curl, Tem
     def download_get_install_pip(self):
         fname = self.tempFile('get-pip')
         self.download_to_temp("https://bootstrap.pypa.io/get-pip.py", file=fname, verbal=False)
-        if self.is_mac():
-            cmd=f"{self.executable()} {fname}"
-        elif self.root_or_sudo():
-            if self.username()=='root':
-                cmd=f"{self.executable()} {fname}"
-            else:
-                cmd=f"sudo {self.executable()} {fname}"
-        else:
-            cmd=f"{self.executable()} {fname}"
+        cmd="%s %s" % (self.executable(),fname)
+        if (not self.is_mac() and self.is_linux()) and not self.root_or_sudo():
+            cmd="sudo %s %s" % (self.executable(),fname)
         self.cmd_history("# ** install pip by get-pip.py **")
         self.cmd_history(cmd)
         self.shell(cmd)
@@ -3143,9 +3170,9 @@ class AppBase(Installer, AppPara, Ask, ShellProfile, FromPipe, AppMsg, Curl, Tem
             path = "/".join(pathToken)
             pathToken.pop()
             if path == '' :
-                configFile = f'/{ini_name}'
+                configFile = "/%s" % ini_name
             else :
-                configFile = f"{path}/{ini_name}" 
+                configFile = "%s/%s" % (path, ini_name) 
             if self.pathexists( configFile ) :
                 self.infoMsg("Configuation file: '%s' !" % configFile, "CONFIG FOUND")
                 self.configFile( configFile )
@@ -3187,7 +3214,7 @@ class AppBase(Installer, AppPara, Ask, ShellProfile, FromPipe, AppMsg, Curl, Tem
         result = False
         tar = self.which_cmd("tar")
         if tar != "":
-            result, stdout = self.shell(f"{tar} --version")
+            result, stdout = self.shell("%s --version" % tar)
             if "GNU tar" in stdout:
                 result = True
         return result
@@ -3489,7 +3516,7 @@ class AppBase(Installer, AppPara, Ask, ShellProfile, FromPipe, AppMsg, Curl, Tem
                         self.sudoRemoveFile(self.globalInstallPath(1))
                         result = True
                 else:
-                    if verbal:
+                    if verbal and self.signal() != 2:
                         self.msg_unintall_need_root()
                     return False
             else:
@@ -3670,8 +3697,11 @@ class AppBase(Installer, AppPara, Ask, ShellProfile, FromPipe, AppMsg, Curl, Tem
                 self.cp(tempScript, target, useSudo=useSudo)
                 self.history_remove_temp(currentframe().f_lineno)
                 self.removeFile(tempScript)
-                self.history_change_target_mode(currentframe().f_lineno)
-                result=self.chmod_x(target, useSudo=useSudo)
+                if not self.is_window():
+                    self.history_change_target_mode(currentframe().f_lineno)
+                    result=self.chmod_x(target, useSudo=useSudo)
+                else:
+                    return True
         else:
             self.msg_download_not_found(target)
         return result
@@ -3720,50 +3750,87 @@ class AppBase(Installer, AppPara, Ask, ShellProfile, FromPipe, AppMsg, Curl, Tem
 
 class DockerConfig(object):
 
-    def check_config(self, display_list=False):
+    def get_profile_list(self, config):
+        profileList = ['Alpine-3.16', 'Alpine-3.17', 'Alpine-3.18', 'Centos-7', 'Centos-8', 'Centos-9', 
+            'Debian-10', 'Debian-11', 'Debian-12', 'Ubuntu-18.04', 'Ubuntu-18.10', 'Ubuntu-19.04', 
+            'Ubuntu-19.10','Ubuntu-20.04', 'Ubuntu-20.10', 'Ubuntu-21.04', 'Ubuntu-21.10',
+            'Ubuntu-21.04', 'Ubuntu-21.10', 'Ubuntu-22.04', 'Ubuntu-22.10', 'Ubuntu-23.04',
+            'Ubuntu-23.10', 'Ubuntu-24.04']
+        self.foundList = []
+        choice = []
+        index = 1
+        for p in profileList:
+            if config.has_section(p):
+                self.foundList.append(p)
+                choice.append("%6d) %s" % (index, p))
+                index += 1
+        if index == 1:
+            choice = ['N/A']
+        return choice, index
+
+    def get_all_profile(self):
         if self.configFile() == '':
             self.find_config()
         if self.configFile() != '':
             config = configparser.ConfigParser()
             config.read( self.configFile() )
-            if config.has_section(self.profile()):
-                sessionName=self.profile()
+            self.prn(self.configFile)
+            if config.has_section("docker"):
+                try :
+                    self.projectName( config.get("docker", "projectName"))
+                except :
+                    pass
+            choice, total = self.get_profile_list(config)
+            if len(self.foundList) == 0:
+                self.prn("Proifle: NOT FOUND")
+                return False
+            for l in self.foundList:
+                self.targetOS(l)
+                self.dockerName("%s-%s" % (self.projectName(), self.targetOS()))
+                dockerPath=self.dockerPath()
+                if dockerPath !="":
+                    if self.is_mac():
+                        result, stdout = self.shell("find %s/src/* -exec /bin/zsh -c 'xattr -c \"{}\"' \\;" % (dockerPath), ignoreErr=True)
+                    self.removeFolder("%s/docker-image" % dockerPath, use_history=True)
+                    self.removeFolder("%s/target" % dockerPath, use_history=True)
+                    self.removeFolder("%s/repo" % dockerPath, use_history=True)
+                    self.prn("Container cleaned: %s" % self.dockerName())
+
+    def get_profile(self, display_list):
+        config = configparser.ConfigParser()
+        config.read( self.configFile() )
+        sessionName=''
+        if config.has_section(self.profile()):
+            sessionName=self.profile()
+        if not (sessionName!= '' and config.has_section(sessionName)):
+            choice, total = self.get_profile_list(config)
+            if len(self.foundList) == 0:
+                self.prn("Proifle: %s NOT FOUND" % sessionName)
+                return config, ''
+            elif len(self.foundList) == 1:
+                sessionName=self.foundList[0]
+            elif display_list:
+                self.prn("\n".join(choice))
             else:
-                sessionName=''
-            if not (sessionName!= '' and config.has_section(sessionName)):
-                profileList = ['Alpine-3.16', 'Alpine-3.17', 'Alpine-3.18', 'Centos-7', 'Centos-8', 'Centos-9', 
-                    'Debian-10', 'Debian-11', 'Debian-12', 'Ubuntu-18.04', 'Ubuntu-18.10', 'Ubuntu-19.04', 
-                    'Ubuntu-19.10','Ubuntu-20.04', 'Ubuntu-20.10', 'Ubuntu-21.04', 'Ubuntu-21.10',
-                    'Ubuntu-21.04', 'Ubuntu-21.10', 'Ubuntu-22.04', 'Ubuntu-22.10', 'Ubuntu-23.04',
-                    'Ubuntu-23.10']
-                foundList = []
-                choice = []
-                index = 1
-                for p in profileList:
-                    if config.has_section(p):
-                        foundList.append(p)
-                        choice.append("%6d) %s" % (index, p))
-                        index += 1
-                if len(foundList) == 0:
-                    self.prn("Proifle: %s NOT FOUND" % sessionName)
-                    return False
-                elif len(foundList) == 1:
-                    sessionName=foundList[0]
-                elif display_list:
-                    self.prn("\n".join(choice))
-                else:
-                    self.prn("Please choose the following by typing the number (type 'exit' to exit): ")
-                    self.prn("\n".join(choice))
-                    self.prn("  type 'exit' to exit")
+                self.prn("Please choose the following by typing the number (type 'exit' to exit): ")
+                self.prn("\n".join(choice))
+                self.prn("  type 'exit' to exit")
+                num = self.ask_choose_profile_number()
+                if num == -1 :
+                    exit()
+                while num<1 or num >= total:
                     num = self.ask_choose_profile_number()
                     if num == -1 :
                         exit()
-                    while num<1 or num >= index:
-                        num = self.ask_choose_profile_number()
-                        if num == -1 :
-                            exit()
-                    sessionName=foundList[num - 1]
-            self.profile(sessionName)
+                sessionName=self.foundList[num - 1]
+        self.profile(sessionName)
+        return config, sessionName
+
+    def check_config(self, display_list=False):
+        if self.configFile() == '':
+            self.find_config()
+        if self.configFile() != '':
+            config, sessionName = self.get_profile(display_list)
             if config.has_section("project"):
                 try :
                     self.projectName( config.get("project", "projectName"))
@@ -3842,7 +3909,8 @@ class DockerConfig(object):
                 try:
                     arch = self.arch()
                     self.targetOS(config.get(sessionName, "os"))
-                    self.dockerName("%s-%s" % (self.projectName(), self.targetOS()))
+                    if self.dockerName() == '':
+                        self.dockerName("%s-%s" % (self.projectName(), self.targetOS()))
                     if arch == '':
                         self.docker_tag(config.get(sessionName, "os"))
                     else :
@@ -3862,17 +3930,19 @@ class DockerConfig(object):
                     self.exposedPort( config.get(sessionName, "exposedPort"))
                 except:
                     pass
-                if self.maintainer() == '':
-                    self.infoMsg("Can't find maintainer in config", "CONFIG FAILED")
-                if self.maintainerEmail() == '':
-                    self.infoMsg("Can't find maintainerEmail in config", "CONFIG FAILED")
-                if self.projectName() == '':
-                    self.infoMsg("Can't find projectName in config", "CONFIG FAILED")
-                if self.dockerName() == '':
-                    self.infoMsg("Can't find dockerName in config", "CONFIG FAILED")
-                if self.docker_tag() == '':
-                    self.infoMsg("Can't find tag in config", "CONFIG FAILED")
-                return self.maintainer() != '' and self.maintainerEmail() != '' and self.projectName() != '' and self.dockerName() != '' and self.docker_tag() !=''
+            if sessionName=="":
+                return False
+            if self.maintainer() == '':
+                self.infoMsg("Can't find maintainer in config", "CONFIG FAILED")
+            if self.maintainerEmail() == '':
+                self.infoMsg("Can't find maintainerEmail in config", "CONFIG FAILED")
+            if self.projectName() == '':
+                self.infoMsg("Can't find projectName in config", "CONFIG FAILED")
+            if self.dockerName() == '':
+                self.infoMsg("Can't find dockerName in config", "CONFIG FAILED")
+            if self.docker_tag() == '':
+                self.infoMsg("Can't find tag in config", "CONFIG FAILED")
+            return self.maintainer() != '' and self.maintainerEmail() != '' and self.projectName() != '' and self.dockerName() != '' and self.docker_tag() !=''              
         else :
             self.criticalMsg("File: project.ini not found!","NO CONFIG")
         return False
@@ -3930,14 +4000,24 @@ class DockerConfig(object):
                 arch = 'aarch64'
             targetOS = re.sub(':','-',self.targetOS())
             if self.pathexists('%s/%s-%s/Dockerfile' % (self.projectPath(),targetOS,arch)):
-                self.safeMsg("Location of the Dockerfile is: %s/%s-%s/Dockerfile" % (self.projectPath(),targetOS,arch),"DOCKER FILE")
-                self.__dockerPath__='%s/%s-%s' % (self.projectPath(),targetOS,arch)
+                if self.isCmd():
+                    self.safeMsg("Location of the Dockerfile is: %s\\%s-%s\\Dockerfile" % (self.projectPath(),targetOS,arch),"DOCKER FILE")
+                    self.__dockerPath__='%s\\%s-%s' % (self.projectPath(),targetOS,arch)
+                else:
+                    self.safeMsg("Location of the Dockerfile is: %s/%s-%s/Dockerfile" % (self.projectPath(),targetOS,arch),"DOCKER FILE")
+                    self.__dockerPath__='%s/%s-%s' % (self.projectPath(),targetOS,arch)
             elif self.pathexists('%s/%s/Dockerfile' % (self.projectPath(),arch)):
-                self.__dockerPath__='%s/%s' % (self.projectPath(),arch)
+                if self.isCmd():
+                    self.__dockerPath__='%s\\%s' % (self.projectPath(),arch)
+                else:
+                    self.__dockerPath__='%s/%s' % (self.projectPath(),arch)
             elif  self.pathexists('%s/Dockerfile' % self.projectPath()) :
                 self.__dockerPath__=self.projectPath()
             if self.__dockerPath__ != '':
-                self.imagePath('%s/docker-image' % self.__dockerPath__)
+                if self.isCmd():
+                    self.imagePath('%s\\docker-image' % self.__dockerPath__)
+                else:
+                    self.imagePath('%s/docker-image' % self.__dockerPath__)
         return self.__dockerPath__
 
     def exposedPort(self, exposedPort=None):
@@ -3964,30 +4044,6 @@ class DockerConfig(object):
             self.__externalPort__=''
         return self.__externalPort__
 
-    def getDockerName(self):
-        self.container_ls()
-        choice = []
-        dockerList = []
-        index = 1
-        for p in self.__containers__:
-            sp=re.sub(r"\s+.+","",re.sub(r"^[a-z0-9]+\s+","",p))
-            dk= re.sub(r"\s+.+","",p)
-            if sp != "" and sp != "CONTAINER":
-                choice.append("%6d) %s (%s)" % (index, sp, dk))
-                dockerList.append(dk)
-                index += 1
-        self.prn("Please choose the following by typing the number (type 'exit' to exit): ")
-        self.prn("\n".join(choice))
-        self.prn("  type 'exit' to exit")
-        num = self.ask_choose_profile_number()
-        if num is None :
-            exit()
-        while num is not None and (num<1 or num >= index):
-            num = self.ask_choose_profile_number()
-            if num == -1 :
-                return ""
-        return dockerList[num - 1]
-
     def imagePath(self, imagePath=None):
         if imagePath is not None:
             self.__imagePath__=imagePath
@@ -3998,7 +4054,7 @@ class DockerConfig(object):
 
     def maintainer(self, maintainer=None):
         if maintainer is not None:
-            self.__maintainer__=maintainer
+            self.__maintainer__=re.sub(r"\s+", "", maintainer).lower()
             return self
         elif not hasattr(self,'__maintainer__'):
             self.__maintainer__=''
@@ -4067,7 +4123,6 @@ class DockerBuild(object):
         result = self.mkdir("%s/target" % path) 
         return result
 
-
     def hasEtc(self, hasEtc=None):
         if hasEtc is not None:
             self.__hasEtc__=hasEtc
@@ -4116,20 +4171,31 @@ class DockerBuild(object):
             self.__hasUsr__=False
         return self.__hasUsr__
 
+    def hasVar(self, hasVar=None):
+        if hasVar is not None:
+            self.__hasVar__=hasVar
+            return self
+        elif not hasattr(self, '__hasVar__'):
+            self.__hasVar__=False
+        return self.__hasVar__
+
     def image_build(self, tag):
         result = self.image_prebuild()
         if result:
             cmd = ''
             os.chdir(self.dockerPath())
             self.cmd_history("# ** Docker Command ** ")
-            if self.osVersion() == 'macOS':
+            if self.is_mac() or self.is_window():
                 cmd = "docker build -t %s/%s:%s ." % (self.maintainer(), self.projectName(),tag)
             elif self.sudo_test():
                 cmd = "sudo docker build -t %s/%s:%s ." % (self.maintainer(), self.projectName(),tag)
             if cmd != '' :
-                self.cmd_history(cmd)
-                result, stdout = self.shell(cmd, ignoreErr=True)
-                print(stdout)
+                try:
+                    self.cmd_history(cmd)
+                    result, stdout = self.shell(cmd, ignoreErr=True)
+                    print(stdout)
+                except:
+                    pass
             else :
                 self.msg_incompatiable_os("BUILD FAILED")
         self.cmd_history_print(currentframe().f_lineno)
@@ -4137,6 +4203,7 @@ class DockerBuild(object):
             self.safeMsg("Command 'build' executed!", "COMMAND")
 
     def image_prebuild(self):
+        result = False
         dockerPath = self.dockerPath()
         if dockerPath!="":
             self.safeMsg("Using docker path: %s" % dockerPath, 'DOCKER PATH')
@@ -4148,10 +4215,10 @@ class DockerBuild(object):
                 result, stdout = self.shell("rm -rf %s/*" % img_path, True )
                 self.mkdir( img_path )
                 if self.pathexists('%s/docker-image' % self.projectPath()):
-                    result, stdout = self.shell('cp -rP "%s/docker-image" "%s/"' % (self.projectPath(),dockerPath))
+                    result, stdout = self.cp('%s/docker-image' % self.projectPath(), "%s/" % dockerPath)
                 if self.pathexists('%s/src' % dockerPath):
                     if os.listdir('%s/src' % dockerPath):
-                        result, stdout = self.shell('cp -rP %s/src/* "%s/"' % (dockerPath,img_path))
+                        result, stdout = self.cp('%s/src/*' % dockerPath, '%s/' % img_path)
             if not self.npm_install_app_folder():
                 self.criticalMsg("npm is required", "NO NPM")
                 return False
@@ -4188,6 +4255,7 @@ class DockerBuild(object):
             self.hasLib64(self.pathexists('%s/lib64/' % img_path))
             self.hasEtc(self.pathexists('%s/etc/' % img_path))
             self.hasOpt(self.pathexists('%s/opt/' % img_path))
+            self.hasVar(self.pathexists('%s/var/' % img_path ))
             usrlib = '%s/usr/lib' % img_path
             usrLocalBin = '%s/usr/local/lib' % img_path
             lib = '%s/lib' % img_path
@@ -4220,11 +4288,15 @@ class DockerBuild(object):
                 self.history_compress("lib64.tar.gz", currentframe().f_lineno)
                 os.chdir(img_path)
                 self.tar_compress("../target/lib64.tar.gz","lib64")
-                os.chdir(self.curPath())
             if self.hasOpt():
                 self.history_compress("opt.tar.gz", currentframe().f_lineno)
                 os.chdir(img_path)
                 self.tar_compress("../target/opt.tar.gz","opt")
+            if self.hasVar():
+                self.history_compress("var.tar.gz", currentframe().f_lineno)
+                os.chdir(img_path)
+                self.tar_compress("../target/var.tar.gz","var")
+            os.chdir(self.curPath())
         else :
             self.criticalMsg("Dockerfile Not found", "DOCKERFILE")
         return result
@@ -4266,8 +4338,8 @@ class DockerBuild(object):
 class ContainerBase(object):
 
     def container_attach(self, dockerName, display_history=False):
-        if self.is_mac():
-            self.cmd_history("# ** Docker Command ** ")
+        if self.is_mac() or self.is_window():
+            self.cmd_history("# ** Docker Command ** ", currentframe().f_lineno)
             try:
                 self.cmd_history(" ".join(["docker","attach", "--sig-proxy=false", dockerName]))
                 if display_history:
@@ -4276,7 +4348,7 @@ class ContainerBase(object):
             except:
                 self.run_shell(" ".join(["docker","attach", "--sig-proxy=false", dockerName]))
         elif self.sudo_test():
-            self.cmd_history("# ** Docker Command ** ")
+            self.cmd_history("# ** Docker Command ** ", currentframe().f_lineno)
             try:
                 self.cmd_history(" ".join(["docker","attach", "--sig-proxy=false", dockerName]))
                 if display_history:
@@ -4293,7 +4365,7 @@ class ContainerBase(object):
         else:
             shell = '/bin/bash'
         self.cmd_history("# ** Docker Command ** ", currentframe().f_lineno)
-        if self.is_mac():
+        if self.is_mac() or self.is_window():
             try:
                 self.cmd_history(' '.join(["docker","exec","-it", dockerName,shell]))
                 if display_history:
@@ -4316,7 +4388,7 @@ class ContainerBase(object):
         cmd = ''
         self.__containers__={}
         self.__container_id__ = []
-        if self.is_mac():
+        if self.is_mac() or self.is_window():
             cmd = "docker container ls --all" 
         elif self.sudo_test():
             cmd = "sudo docker container ls --all"
@@ -4345,20 +4417,49 @@ class ContainerBase(object):
         if found == 0 :
             self.infoMsg("Docker Container: '%s' or '%s' missing!" % (self.dockerName(),'%s-test' % self.dockerName()), "NOT FOUND")
 
-    def container_restart(self, name):
-        cmd = ""
-        if self.is_mac():
-             cmd = "docker container restart %s" % name
-        elif self.sudo_test():
-            cmd = "sudo docker container restart %s" % name
-        if cmd != '':
+    def container_restart(self, dockerName, display_history=False):
+        if self.is_mac() or self.is_window():
             self.cmd_history("# ** Docker Command ** ", currentframe().f_lineno)
-            self.cmd_history(cmd)
-            result, stdout = self.shell(cmd, True)
-            if stdout != '':
-                print(stdout)
+            try:
+                self.cmd_history(" ".join(["docker","container","restart", dockerName]))
+                if display_history:
+                    self.cmd_history_print()
+                subprocess.run(["docker","container","restart", dockerName])
+            except:
+                self.run_shell(" ".join(["docker","container","restart", dockerName]))
+        elif self.sudo_test():
+            self.cmd_history("# ** Docker Command ** ", currentframe().f_lineno)
+            try:
+                self.cmd_history(" ".join(["docker","container","restart", dockerName]))
+                if display_history:
+                    self.cmd_history_print()
+                subprocess.run(["sudo","docker","container","restart", dockerName])
+            except:
+                self.run_shell(" ".join(["sudo","docker","container","restart", dockerName]))
         else :
-            self.criticalMsg("Using incompatible OS or not able to use sudo", "RESTART FAILED")
+            self.criticalMsg("Terminated!","RESTART")
+
+    def container_start(self, dockerName, display_history=False):
+        if self.is_mac() or self.is_window():
+            self.cmd_history("# ** Docker Command ** ", currentframe().f_lineno)
+            try:
+                self.cmd_history(" ".join(["docker","container","start", dockerName]))
+                if display_history:
+                    self.cmd_history_print()
+                subprocess.run(["docker","container","start", dockerName])
+            except:
+                self.run_shell(" ".join(["docker","container","start", dockerName]))
+        elif self.sudo_test():
+            self.cmd_history("# ** Docker Command ** ", currentframe().f_lineno)
+            try:
+                self.cmd_history(" ".join(["docker","container","start", dockerName]))
+                if display_history:
+                    self.cmd_history_print()
+                subprocess.run(["sudo","docker","container","start", dockerName])
+            except:
+                self.run_shell(" ".join(["sudo","docker","container","start", dockerName]))
+        else :
+            self.criticalMsg("Terminated!","START")
 
     def container_run(self, dockerName, tag):
         result = self.check_config()
@@ -4374,9 +4475,12 @@ class ContainerBase(object):
             if overwritten :
                 cmd = ''
                 dockerPath = ''
-                if self.osVersion() == 'macOS':
-                    dockerPath = "%s/Documents/dockers/%s" % (os.path.expanduser("~"),dockerName)                    
-                    cmd = "mkdir -p %s" % dockerPath
+                if self.is_mac() or self.is_window():
+                    if self.is_mac():
+                        dockerPath = "%s/Documents/dockers/%s" % (os.path.expanduser("~"),dockerName) 
+                    elif self.is_window():
+                        dockerPath = "%s\\Documents\\dockers\\%s" % (os.path.expanduser("~"),dockerName) 
+                    cmd = self.mkdir(dockerPath)
                 elif self.sudo_test():
                     dockerPath = "/data/%s" % dockerName
                     cmd = "sudo mkdir -p %s" % dockerPath
@@ -4391,7 +4495,7 @@ class ContainerBase(object):
                     if self.exposedPort() != '' and self.externalPort() != '':
                         params = '%s -p "0.0.0.0:%s:%s/tcp" ' % (params, self.externalPort(), self.exposedPort())
                     params = params + ' -v "%s:%s" ' % ( dockerPath, self.exposedVolume())
-                    if self.osVersion() == 'macOS':
+                    if self.is_mac() or self.is_window():
                         cmd = "docker run %s --name %s -d %s/%s:%s" % ( params, dockerName, self.maintainer(), self.projectName(),tag)
                     else :
                         cmd = "sudo docker run %s --name %s -d %s/%s:%s" % ( params, dockerName, self.maintainer(), self.projectName(),tag)
@@ -4400,13 +4504,35 @@ class ContainerBase(object):
                     result, stdout = self.shell(cmd)
                 else :
                     result = False
-                    self.criticalMsg("Using incompatible OS or not able to use sudo", "CLEAN FAILED")
+                    self.criticalMsg("Using incompatible OS or not able to use sudo", "RUN FAILED")
         if result: 
             self.safeMsg("Command 'run' executed!", "SUCCESS")
 
+    def container_stop(self, dockerName, display_history=False):
+        if self.is_mac() or self.is_window():
+            self.cmd_history("# ** Docker Command ** ", currentframe().f_lineno)
+            try:
+                self.cmd_history(" ".join(["docker","container","stop", dockerName]))
+                if display_history:
+                    self.cmd_history_print()
+                subprocess.run(["docker","container","stop", dockerName])
+            except:
+                self.run_shell(" ".join(["docker","container","stop", dockerName]))
+        elif self.sudo_test():
+            self.cmd_history("# ** Docker Command ** ", currentframe().f_lineno)
+            try:
+                self.cmd_history(" ".join(["docker","container","stop", dockerName]))
+                if display_history:
+                    self.cmd_history_print()
+                subprocess.run(["sudo","docker","container","stop", dockerName])
+            except:
+                self.run_shell(" ".join(["sudo","docker","container","stop", dockerName]))
+        else :
+            self.criticalMsg("Terminated!","STOP")
+
     def container_rm(self, name):
         cmd = ""
-        if self.is_mac():
+        if self.is_mac() or self.is_window():
              cmd = "docker container rm -f %s" % name
         elif self.sudo_test():
             cmd = "sudo docker container rm -f %s" % name
@@ -4424,10 +4550,10 @@ class ContainerBase(object):
 
     def check_container(self, name):
         cmd = ""
-        if self.osVersion() == 'macOS':
-            cmd=f"docker container ls -f name={name}"
+        if self.is_mac() or self.is_window():
+            cmd="docker container ls -f name=%s" % name
         elif self.sudo_test():
-            cmd=f"sudo docker container ls -f name={name}"
+            cmd="sudo docker container ls -f name=%s" % name
         if cmd != '' :
             result, stdout = self.shell(cmd , True)
             if result:
@@ -4439,7 +4565,7 @@ class ContainerBase(object):
 class ImageBase(object):
 
     def image_rm_all(self):
-        if self.osVersion() == 'macOS':
+        if self.is_mac() or self.is_window():
             cmd = "docker image ls"
         elif self.sudo_test():
             cmd = "sudo docker image ls"
@@ -4448,8 +4574,8 @@ class ImageBase(object):
             for l in stdout.split('\n'):
                 token = l.split()
                 if len(token) > 3:
-                    self.cmd_history("# ** Docker Command ** ")
-                    if self.osVersion() == 'macOS':
+                    self.cmd_history("# ** Docker Command ** ", currentframe().f_lineno)
+                    if self.is_mac() or self.is_window():
                         cmd = "docker image rm %s" % token[2]
                     else :
                         cmd = "sudo docker image rm %s" % token[2]
@@ -4463,10 +4589,9 @@ class ImageBase(object):
             self.msg_incompatiable_os("CLEAN FAILED")
 
     def image_clean_unused(self):
-        if self.osVersion() == 'macOS':
+        if self.is_mac() or self.is_window():
             cmd = "docker image ls"
         elif self.sudo_test():
-
             cmd = "sudo docker image ls"
         if cmd != '' :
             result, stdout = self.shell(cmd)
@@ -4474,8 +4599,8 @@ class ImageBase(object):
                 if '<none>' in l:
                     token = l.split()
                     if len(token) > 3:
-                        self.cmd_history("# ** Docker Command ** ")
-                        if self.osVersion() == 'macOS':
+                        self.cmd_history("# ** Docker Command ** ", currentframe().f_lineno)
+                        if self.is_mac() or self.is_window():
                             cmd = "docker image rm %s" % token[2]
                         else :
                             cmd = "sudo docker image rm %s" % token[2]
@@ -4490,7 +4615,7 @@ class ImageBase(object):
 
     def image_ls(self):
         cmd = ''
-        if self.is_mac():
+        if self.is_mac() or self.is_window():
             cmd = "docker image ls" 
         elif self.sudo_test():
             cmd = "sudo docker image ls" 
@@ -4526,7 +4651,7 @@ class DockerBase(AppBase, DockerConfig, DockerBuild, ContainerBase, ImageBase):
 
     def start(self):
         self.allowInstallLocal(True).allowDisplayInfo(False)
-        self.usage("attach|build|container|clean-image|exec|image|ls|rm|run|self-install")
+        self.usage("attach|build|clean|clean-image|container|exec|image|ls|restart|rm|run|self-install|start|stop")
         if not self.parseArgs():
             if len(sys.argv) > 1:
                 shortSwitch = []
@@ -4574,13 +4699,11 @@ class DockerBase(AppBase, DockerConfig, DockerBuild, ContainerBase, ImageBase):
                         pass
                     else :
                         self.cmd_list(a)
+                        if self.cmd() == "":
+                            self.cmd(a)
                 if '--test' in longSwitch or '-t' in shortSwitch:
                     self.testProfile(True)
-                if len(self.cmd_list()) > 0:
-                    self.cmd(str(self.cmd_list()[0]))
-                    arch = self.arch()
-                else :
-                    self.cmd('')
+
                 if self.cmd() == 'build':
                     result = self.check_config()
                     if result:
@@ -4588,8 +4711,33 @@ class DockerBase(AppBase, DockerConfig, DockerBuild, ContainerBase, ImageBase):
                             tag = "-test" % self.docker_tag()
                         else:
                             tag = self.docker_tag()
-                        self.safeMsg('Using profile: "%s". Architecture: "%s".' % (self.profile(),arch),'PROFILE')
+                        self.safeMsg('Using profile: "%s". Architecture: "%s".' % (self.profile(),self.arch()),'PROFILE')
                         self.image_build(tag)
+                    return True
+                elif self.cmd() == "clean-all":
+                    self.get_all_profile()
+                    return True
+                elif self.cmd() == "clean":
+                    result = self.check_config()
+                    dockerName = ""
+                    if result:
+                        if self.testProfile():
+                            tag = '%s-test' % self.docker_tag()
+                            dockerName = '%s-test' % self.dockerName()
+                        else:
+                            dockerName = self.dockerName()
+                            tag = self.docker_tag()
+                        self.safeMsg('Using profile: "%s". Architecture: "%s". DockerName: "%s".' % (self.profile(),arch, dockerName),'PROFILE')
+                    if dockerName !="":
+                        self.cmd_history("# ** Remove temporary folder **", currentframe().f_lineno)
+                        dockerPath=self.dockerPath()
+                        if dockerPath !="":
+                            if self.is_mac():
+                                result, stdout = self.shell("find %s/src/* -exec /bin/zsh -c 'xattr -c \"{}\"' \\;" % (dockerPath), ignoreErr=True)
+                            self.removeFolder("%s/docker-image" % dockerPath, use_history=True)
+                            self.removeFolder("%s/target" % dockerPath, use_history=True)
+                            self.removeFolder("%s/repo" % dockerPath, use_history=True)
+                        self.cmd_history_print()
                     return True
                 elif self.cmd() == "clean-image" or self.cmd() == "clean-images":
                     self.image_clean_unused()
@@ -4602,6 +4750,22 @@ class DockerBase(AppBase, DockerConfig, DockerBuild, ContainerBase, ImageBase):
                     result = self.check_config()
                     dockerName = ""
                     if result:
+                        print(1)
+                        if self.testProfile():
+                            tag = '%s-test' % self.docker_tag()
+                            dockerName = '%s-test' % self.dockerName()
+                        else:
+                            dockerName = self.dockerName()
+                            tag = self.docker_tag()
+                        self.safeMsg('Using profile: "%s". Architecture: "%s". DockerName: "%s".' % (self.profile(),self.arch(), dockerName),'PROFILE')
+                        if not self.check_container(dockerName):
+                            self.container_run(dockerName, tag)
+                    if dockerName !="":
+                        self.container_exec(dockerName, display_history=True)
+                    return True
+                elif self.cmd() == 'stop':
+                    result = self.check_config()
+                    if result:
                         if self.testProfile():
                             tag = '%s-test' % self.docker_tag()
                             dockerName = '%s-test' % self.dockerName()
@@ -4609,12 +4773,19 @@ class DockerBase(AppBase, DockerConfig, DockerBuild, ContainerBase, ImageBase):
                             dockerName = self.dockerName()
                             tag = self.docker_tag()
                         self.safeMsg('Using profile: "%s". Architecture: "%s". DockerName: "%s".' % (self.profile(),arch, dockerName),'PROFILE')
-                        if not self.check_container(dockerName):
-                            self.container_run(dockerName, tag)
-                    else:
-                        dockerName=self.getDockerName()
-                    if dockerName !="":
-                        self.container_exec(dockerName, display_history=True)
+                        self.container_stop(dockerName, display_history=True)
+                    return True
+                elif self.cmd() == 'restart':
+                    result = self.check_config()
+                    if result:
+                        if self.testProfile():
+                            tag = '%s-test' % self.docker_tag()
+                            dockerName = '%s-test' % self.dockerName()
+                        else:
+                            dockerName = self.dockerName()
+                            tag = self.docker_tag()
+                        self.safeMsg('Using profile: "%s". Architecture: "%s". DockerName: "%s".' % (self.profile(),arch, dockerName),'PROFILE')
+                        self.container_restart(dockerName, display_history=True)
                     return True
                 elif self.cmd() == 'attach':
                     result = self.check_config()
@@ -4698,7 +4869,7 @@ class DockerBase(AppBase, DockerConfig, DockerBuild, ContainerBase, ImageBase):
                                 self.removeFolder("%s/repo" % dockerPath, use_history=True)
                             self.cmd_history_print()
                     return True
-                elif self.cmd() == 'restart':
+                elif self.cmd() == 'start':
                     result = self.check_config()
                     if result:
                         if self.testProfile():
@@ -4706,7 +4877,7 @@ class DockerBase(AppBase, DockerConfig, DockerBuild, ContainerBase, ImageBase):
                         else:
                             dockerName = self.dockerName()
                         self.safeMsg('Using profile: "%s". Architecture: "%s". DockerName: "%s".' % (self.profile(),arch, dockerName),'PROFILE')
-                        self.container_restart(dockerName)
+                        self.container_start(dockerName)
                     return True
                 elif self.cmd() == 'run':
                     result = self.check_config()
@@ -4717,7 +4888,7 @@ class DockerBase(AppBase, DockerConfig, DockerBuild, ContainerBase, ImageBase):
                         else:
                             dockerName = self.dockerName()
                             tag = self.docker_tag()
-                        self.safeMsg('Using profile: "%s". Architecture: "%s". DockerName: "%s".' % (self.profile(),arch, dockerName),'PROFILE')
+                        self.safeMsg('Using profile: "%s". Architecture: "%s". DockerName: "%s".' % (self.profile(),self.arch(), dockerName),'PROFILE')
                         self.container_run(dockerName, tag)
                     return True
                 else:
@@ -4727,5 +4898,5 @@ class DockerBase(AppBase, DockerConfig, DockerBuild, ContainerBase, ImageBase):
 
 if __name__ == "__main__":
     app = DockerBase(__file__)
-    app.setInstallation(appName='d-master',author='Cloudgen Wong',homepage="https://github.com/cloudgen2/d-master",downloadUrl="https://dl.leolio.page/d-master",lastUpdate='2024-3-20',majorVersion=15,minorVersion=20)
+    app.setInstallation(appName='d-master',author='Cloudgen Wong',homepage="https://github.com/cloudgen2/d-master",downloadUrl="https://dl.leolio.page/d-master",lastUpdate='2024-5-7',majorVersion=17,minorVersion=7)
     app.start()
