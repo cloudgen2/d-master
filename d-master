@@ -62,6 +62,74 @@ import socket
 import time
 import sys
 
+class Attr(object):
+
+    def inside(self,x):
+        if isinstance(x,basestring):
+            x=x.strip()
+        return x in self._["list"]
+
+    def lists(self,x=None):
+        if x is None:
+            return self._["list"]
+        elif x not in self._["list"] and not self._["readonly"]:
+            if isinstance(x,list):
+                for l in x:
+                    if isinstance(l,basestring):
+                        l=l.strip()
+                    self._["list"].append(l)
+            else:
+                if isinstance(x,basestring):
+                    x=x.strip()
+                if not self.inside(x):
+                    self._["list"].append(x)
+        return self._["class"]
+
+    def reset(self):
+        if not self._["readonly"]:
+            self._["list"]=[]
+
+    def value(self,x=None):
+        if x is None:
+            return self._["value"]
+        if not self._["readonly"] or self._["value"] is None or self._["value"]=="":
+            if self._["value"] is None or self._["value"]!=x:
+                self._["value"]=x
+        return self._["class"]
+
+    def __init__(self,fromClass=None,attrName='',value=None, readonly=False):
+        attrName=attrName.strip()
+        if attrName=="":
+            return False
+        if isinstance(value, list):
+            self._ ={"class":fromClass,"name":attrName, "list":value, "readonly":readonly}
+        else:
+            self._ ={"class":fromClass,"name":attrName, "value":value, "readonly":readonly}
+        if fromClass is not None:
+            if not hasattr(fromClass,"_"):
+                fromClass._={}
+            if not hasattr(fromClass._, attrName):
+                fromClass._[attrName]=self
+            if not hasattr(fromClass,attrName):
+                if isinstance(value, list):
+                    def lists(self, value=None):
+                        return fromClass._[attrName].lists(value)
+                    fromClass.__dict__[attrName] = lists.__get__(fromClass)
+                    def inside(self, value):
+                        return fromClass._[attrName].inside(value)
+                    fromClass.__dict__["in%s" % attrName.capitalize()] = inside.__get__(fromClass)
+                    def reset(self):
+                        return fromClass._[attrName].reset()
+                    fromClass.__dict__["reset%s" % attrName.capitalize()] = reset.__get__(fromClass)
+                else:
+                    def attr(self, value=None):
+                        return fromClass._[attrName].value(value)
+                    fromClass.__dict__[attrName] = attr.__get__(fromClass)
+
+class Reflection(object):
+    def hasFunc(self, func):
+        return hasattr(self, func) and callable(getattr(self, func))
+
 class Sh(object):
 
     def isGitBash(self):
@@ -122,29 +190,24 @@ class Sh(object):
 
 class AppData(object):
 
-    def author(self, author=None):
-        if author is not None:
-            self.__author__=author
-            return self
-        elif not hasattr(self,'__author__'):
-            self.__author__=None
-        return self.__author__
+    def __init__(self, this=None):
+        self.__ini_appdata__()
+        if this is None:
+            self.this(__file__)
+        else:
+            self.this(this)
 
-    def appName(self, appName=None):
-        if appName is not None:
-            self.__appName__=appName
-            return self
-        elif not hasattr(self,'__appName__'):
-            self.__appName__=''
-        return self.__appName__
-
-    def downloadUrl(self, downloadUrl=None):
-        if downloadUrl is not None:
-            self.__downloadUrl__=downloadUrl
-            return self
-        elif not hasattr(self,'__downloadUrl__'):
-            self.__downloadUrl__=None
-        return self.__downloadUrl__
+    def __ini_appdata__(self):
+        if not hasattr(self, "__appdata_inited__"):
+            self.__appdata_inited__ = True
+            Attr(self, "author")
+            Attr(self, "appName")
+            Attr(self, "downloadUrl")
+            Attr(self, "homepage")
+            Attr(self, "lastUpdate")
+            Attr(self, "majorVersion", 0)
+            Attr(self, "minorVersion", 0)
+            Attr(self, "thisFile", 0)
 
     def downloadHost(self):
         if self.downloadUrl() == '':
@@ -153,44 +216,28 @@ class AppData(object):
         if x:
             return x.group(1)
         else:
-            ''
+            ''        
+    def fromPipe(self):
+        if hasattr(self,"thisFile") and callable(self.thisFile):
+            return self.thisFile() == '<stdin>'
+        return False
 
-    def homepage(self, homepage=None):
-        if homepage is not None:
-            self.__homepage__=homepage
+    def this(self, this = None):
+        if this is None:
+            if not hasattr(self, '__this__'):
+                self.__this__=self.appPath()
+            return self.__this__
+        else:
+            self.thisFile(this)
+            reg = re.compile(r"/\./")
+            this = reg.sub("/",this)
+            self.__this__ = this
             return self
-        elif not hasattr(self,'__homepage__'):
-            self.__homepage__=None
-        return self.__homepage__
-
-    def lastUpdate(self, lastUpdate=None):
-        if lastUpdate is not None:
-            self.__lastUpdate__=lastUpdate
-            return self
-        elif not hasattr(self,'__lastUpdate__'):
-            self.__lastUpdate__=None
-        return self.__lastUpdate__
-
-    def majorVersion(self, majorVersion=None):
-        if majorVersion is not None:
-            self.__majorVersion__=majorVersion
-            return self
-        elif not hasattr(self,'__majorVersion__'):
-            self.__majorVersion__=0
-        return self.__majorVersion__
-
-    def minorVersion(self, minorVersion=None):
-        if minorVersion is not None:
-            self.__minorVersion__=minorVersion
-            return self
-        elif not hasattr(self,'__minorVersion__'):
-            self.__minorVersion__=0
-        return self.__minorVersion__
 
     def version(self):
         return "%s.%s" % (self.majorVersion(),self.minorVersion())
 
-class MsgBase(Sh, AppData):
+class MsgBase(AppData, Sh):
     BOLD='\033[1m'
     DARK_AMBER='\033[33m'
     DARK_BLUE='\033[34m'
@@ -203,6 +250,25 @@ class MsgBase(Sh, AppData):
     LIGHT_BLUE='\033[94m'
     LIGHT_GREEN='\033[92m'
     LIGHT_TURQUOISE='\033[96m'
+
+    def __init__(self, this=None):
+        try:
+            super().__init__(this)
+        except:
+            super(MsgBase, self).__init__(this)
+        if not hasattr(self, "__msgbase_inited__"):
+            self.__msgbase_inited__ = True
+            Attr(self,"__colorMsgColor__", "")
+            Attr(self,"__colorMsgTerm__","")
+            Attr(self,"__headerColor__","")
+            Attr(self,"__headerTerm__","")
+            Attr(self,"__message__","")
+            Attr(self,"__tag__","")
+            Attr(self,"__tagColor__","")
+            Attr(self,"__tagOutterColor__","")
+            Attr(self,"__tagTerm__","")
+            Attr(self,"__timeColor__","")
+            Attr(self,"__timeTerm__","")
 
     def __coloredMsg__(self,color=None):
         if color is None :
@@ -219,22 +285,6 @@ class MsgBase(Sh, AppData):
                 self.__colorMsgColor__(color)
                 self.__colorMsgTerm__(AppBase.END)
             return self
-
-    def __colorMsgColor__(self, color=None):
-        if color is not None:
-            self.__cmc__=color
-            return self
-        elif not hasattr(self,'__cmc__'):
-            self.__cmc__=""
-        return self.__cmc__
-
-    def __colorMsgTerm__(self,term=None):
-        if term is not None:
-            self.__cmt__=term
-            return self
-        elif not hasattr(self,'__cmt__'):
-            self.__cmt__=""
-        return self.__cmt__
 
     def __formattedMsg__(self):
         return "%s %s %s\n  %s" % (self.__timeMsg__(),self.__header__(),\
@@ -253,46 +303,6 @@ class MsgBase(Sh, AppData):
                 self.__headerColor__(color)\
                     .__headerTerm__(AppBase.END)
         return self
-
-    def __headerColor__(self,color=None):
-        if color is not None:
-            self.__hc__=color
-            return self
-        elif not hasattr(self,'__hc__'):
-            self.__hc__=""
-        return self.__hc__
-
-    def __headerTerm__(self,term=None):
-        if term is not None:
-            self.__ht__=term
-            return self
-        elif not hasattr(self,'__ht__'):
-            self.__ht__=""
-        return self.__ht__
-
-    def __message__(self,message=None):
-        if message is not None:
-            self.__m__=message
-            return self
-        elif not hasattr(self,'__m__'):
-            self.__m__=""
-        return self.__m__
-
-    def __tag__(self, tag=None):
-        if tag is not None:
-            self.__t__=tag
-            return self
-        elif not hasattr(self,'__t__'):
-            self.__t__=''
-        return self.__t__
-
-    def __tagColor__(self, color=None):
-        if color is not None:
-            self.__tc__=color
-            return self
-        elif not hasattr(self,'__tc__'):
-            self.__tc__=''
-        return self.__tc__
 
     def __tagMsg__(self,color=None,outterColor=None):
         if color is None:
@@ -314,30 +324,6 @@ class MsgBase(Sh, AppData):
                     .__tagTerm__(AppBase.END)
             return self
 
-    def __tagOutterColor__(self, color=None):
-        if color is not None:
-            self.__toc__=color
-            return self
-        elif not hasattr(self,'__toc__'):
-            self.__toc__=''
-        return self.__toc__
-    
-    def __tagTerm__(self, term=None):
-        if term is not None:
-            self.__tt__=term
-            return self
-        elif not hasattr(self,'__tt__'):
-            self.__tt__=''
-        return self.__tt__
-
-    def __timeColor__(self, color=None):
-        if color is not None:
-            self.__tcolor__=color
-            return self
-        elif not hasattr(self,'__tcolor__'):
-            self.__tcolor__=''
-        return self.__tcolor__
-
     def __timeMsg__(self, color=None):
         if color is None:
             return "%s%s%s" % (self.__timeColor__(),self.now(),\
@@ -350,14 +336,6 @@ class MsgBase(Sh, AppData):
                 self.__timeColor__(color)\
                     .__timeTerm__(AppBase.END)
             return self
-
-    def __timeTerm__(self, term=None):
-        if term is not None:
-            self.__tterm__=term
-            return self
-        elif not hasattr(self,'__tterm__'):
-            self.__tterm__=''
-        return self.__tterm__
 
     def criticalMsg(self,msg,tag=''):
         self.__tag__(tag).__message__(msg) \
@@ -409,6 +387,12 @@ class MsgBase(Sh, AppData):
         return self.__useColor__
 
 class CmdHistory(MsgBase):
+
+    def __init__(self, this=None):
+        try:
+            super().__init__(this)
+        except:
+            super(CmdHistory, self).__init__(this)
 
     def cmd_history(self,command=None, line=None):
         if not hasattr(self, '__reg_end_stars__'):
@@ -470,7 +454,776 @@ class CmdHistory(MsgBase):
             history_list = '\n  '.join(history)
             self.infoMsg("%s\n  # ====== End at %s ...( %.3f second ) %s ======\n" % ( history_list, str(self.__tick__),self.__diff_time__, end_at), "COMMAND HISTORY")
 
-class Shell(CmdHistory, Sh):
+class AppHistory(CmdHistory):
+
+    def __init__(self, this=None):
+        try:
+            super().__init__(this)
+        except:
+            super(AppHistory, self).__init__(this)
+
+    def history_add_group(self, groupname, line_num=None):
+        self.cmd_history("# ** Adding user group: %s **" % groupname, line_num)
+
+    def history_add_user(self, username, line_num=None):
+        self.cmd_history("# ** Adding user: %s **" % username, line_num)
+
+    def history_backup_nginx_conf(self, line_num=None):
+        self.cmd_history("# ** Try to backup nginx config **", line_num)
+
+    def history_cd(self, path="", line_num=None):
+        self.cmd_history("cd %s" % path, line_num)
+
+    def history_cd_decompress(self, line_num=None):
+        self.cmd_history("# ** Change to temp folder to uncompress **", line_num)
+
+    def history_change_target_mode(self, line_num=None):
+        self.cmd_history("# ** Change target to executable **", line_num)
+
+    def history_check_ash(self, line_num=None):
+        self.cmd_history("# ** Try to check and modify ~/.profile **", line_num)
+
+    def history_check_bash(self, line_num=None):
+        self.cmd_history("# ** Try to check and modify ~/.bashrc **", line_num)
+
+    def history_check_copy_sudoers(self, line_num=None):
+        self.cmd_history("# ** Try to check existence or copy from temp to /etc/sudoers.d/ **" , line_num)
+
+    def history_check_mkdir(self, line_num=None):
+        self.cmd_history("# ** Check and create directory **", line_num)
+
+    def history_check_exists(self, name="", line_num=None):
+        self.cmd_history("# ** Check existence of %s **" % name, line_num)
+
+    def history_check_group_exists(self, line_num=None):
+        self.cmd_history("# ** Try to check if the user group exists  **", line_num)
+
+    def history_check_rc_update(self, line_num=None):
+        self.cmd_history("# ** Try to check sudo and add rc-update **" , line_num)
+
+    def history_check_repositories(self, line_num=None):
+        self.cmd_history("# ** Check and update apk repositories **", line_num)
+
+    def history_check_user_exists(self, line_num=None):
+        self.cmd_history("# ** Try to check if the user exists  **", line_num)
+
+    def history_copy_static_lib(self, so_file, line_num=None):
+        self.cmd_history("# ** Copying static library file: %s **" % so_file, line_num)
+
+    def history_copy_temp(self, line_num=None):
+        self.cmd_history("# ** Try to copy from temp to target **" , line_num)
+
+    def history_copy_uncompressed(self, line_num=None):
+        self.cmd_history("# ** Copy uncompressed file to target **", line_num)
+
+    def history_change_ownership_of_folder(self, line_num=None):
+        self.cmd_history("# ** Try to change ownership of folder **", line_num)
+
+    def history_check_zsh(self, line_num=None):
+        self.cmd_history("# ** Try to check and modify ~/.zshenv **", line_num)
+
+    def history_compress(self, target_file, line_num=None):
+        self.cmd_history("# ** Trying to create compressed file %s for container **" % target_file, line_num)
+
+    def history_create_soft_link(self, line_num=None):
+        self.cmd_history("# ** Try to create soft link **", line_num)
+
+    def history_curl_check(self, line_num=None):
+        self.cmd_history("# ** Using curl to check if url is ok **", line_num)
+
+    def history_curl_download(self, line_num=None):
+        self.cmd_history("# ** Using curl for downloading file **", line_num)
+
+    def history_dir(self, path, line_num=None):
+        self.cmd_history("dir %s" % path, line_num)
+
+    def history_group_exists(self, groupname, line_num=None):
+        self.cmd_history("# ** User group: %s exists and no adding for it **" % groupname, line_num)
+
+    def history_install_package(self, package, line_num):
+        self.cmd_history("# ** Install package: %s **" % package, line_num)
+
+    def history_ls(self, path, line_num=None):
+        self.cmd_history("ls %s" % path, line_num)
+
+    def history_link_exists(self, path, line_num=None):
+        self.cmd_history("# link exists: %s, no need to create short link" % path, line_num)
+
+    def history_location_found(self, location, line_num=None):
+        self.cmd_history("# found: %s" % location, line_num)
+
+    def history_open_as_source(self, f, line_num=None):
+        self.cmd_history("# ** Open %s as source file **" % f, line_num)
+
+    def history_open_as_target(self, f, line_num=None):
+        self.cmd_history("# ** Open %s as the location for writing **" % f, line_num)
+
+    def history_package_exists(self, package, line_num=None):
+        self.cmd_history("# Package: %s exists and no installation for it **" % package, line_num)
+
+    def history_remove_downloaded(self, line_num=None):
+        self.cmd_history("# ** Try to remove downloaded file **", line_num)
+
+    def history_remove_folder(self, folder, line_num=None):
+        self.cmd_history("# ** Try to remove folder: %s **" % folder, line_num)
+
+    def history_remove_previous_global(self, line_num=None):
+        self.cmd_history("# ** Try to remove previous installed global version **", line_num)
+
+    def history_remove_previous_local(self, line_num=None):
+        self.cmd_history("# ** Try to remove previous installed local version **", line_num)
+
+    def history_remove_sudoer(self, line_num=None):
+        self.cmd_history("# ** Try to check and remove sudoer file **", line_num)
+
+    def history_remove_source(self, line_num=None):
+        self.cmd_history("# ** Try to remove source file **", line_num)
+
+    def history_remove_temp(self, line_num=None):
+        self.cmd_history("# ** Try to remove temp file **", line_num)
+
+    def history_remove_uncompressed(self, line_num=None):
+        self.cmd_history("# ** Try to remove uncompressed file **", line_num)
+
+    def history_remove_user(self, username, line_num=None):
+        self.cmd_history("# ** Removing user: %s **" % username, line_num)
+
+    def history_update_repository(self, line_num=None):
+        self.cmd_history("# ** Try to update repository first **", line_num)
+
+    def history_uninstall_package(self, package, line_num=None):
+        self.cmd_history("# ** Uninstall package: %s **" % package, line_num)
+
+    def history_user_exists(self, username, line_num=None):
+        self.cmd_history("# ** User: %s exists and no adding for it **" % username, line_num)
+
+class OS(AppHistory, Reflection):
+
+    def __init__(self, this = None):
+        try:
+            super().__init__(this)
+        except:
+            super(OS, self).__init__(this)
+        self.__init_os__()
+
+    def __init_os__(self):
+        if not hasattr(self, "__os_inited__"):
+            self.__os_inited__ = True
+            Attr(self, "pythonName", "")
+            Attr(self, "pythonMinor", 0)
+            Attr(self, "pythonMajor", 0)
+            Attr(self, "os_major_version", 0)
+            Attr(self, "os_minor_version", 0)
+            Attr(self, "libcVersion", "")
+            Attr(self, "libcName", "")
+            Attr(self, "is_sudo", False)
+            Attr(self, "binaryVersion", "")
+
+    def alpine_version(self):
+        if not hasattr(self,'__alpine_version__'):
+            if self.osVersion().startswith("Alpine"):
+                version=self.osVersion().split(' ')
+                length=len(version)
+                if length>1:
+                    self.__alpine_version__=version[length - 1]
+            else:
+                self.__alpine_version__=''
+        return self.__alpine_version__
+
+    def appPath(self, path=None):
+        if path is not None:
+            self.__app_path__=path
+            return self
+        elif not hasattr(self,'__app_path__'):
+            self.__app_path__=''
+            if not self.fromPipe() and self.this() != '':
+                appPath = os.path.abspath(self.this())
+                if not appPath.startswith(self.globalFolder(0)) and not appPath.startswith(self.globalFolder(0)) and not appPath.startswith(self.localInstallFolder()):
+                    if self.comparePath(appPath, '%s/%s' % (os.getcwd(),appPath.split("/")[-1])):
+                        self.__app_path__="./%s" % appPath.split("/")[-1]
+                    elif self.comparePath(appPath, self.which()):
+                        self.__app_path__=appPath.split("/")[-1]
+                    else:
+                        self.__app_path__=appPath
+                else:
+                    self.__app_path__=appPath.split("/")[-1]
+        regex = re.compile(r"/\./")
+        self.__app_path__ = regex.sub("/",self.__app_path__)
+        return self.__app_path__
+        
+    def arch(self):
+        if not hasattr(self, '__arch__'):
+            if self.isCmd():
+                self.__arch__ = 'amd64'
+            else:
+                result2, stdout2 = self.uname_a()
+                result, stdout = self.uname_m()
+                if result:
+                    self.__arch__ = stdout.strip()
+                    # "aarch64" and "arm64" are the same thing. AArch64 is the official name for the 64-bit ARM architecture, 
+                    # but some people prefer to call it "ARM64" as a continuation of 32-bit ARM.
+                    if self.__arch__ == 'arm64':
+                        self.__arch__ = 'aarch64'
+                    elif 'ARM64' in stdout2:
+                        self.__arch__ = 'aarch64'
+                    # X86_64 and AMD64 are different names for the same thing
+                    elif self.__arch__ == 'x86_64':
+                        self.__arch__ = 'amd64'
+                else:
+                    self.__arch__=''
+        return self.__arch__
+
+    def check_system(self):
+        if not hasattr(self, '__system_checked__'):
+            if self.pythonVersion().split(".")[0] =="3":
+                self.pythonName( "python3" )
+                self.pythonMajor(3)
+                try:
+                    self.pythonMinor(int(self.pythonVersion().split(".")[1]))
+                except:
+                    self.pythonMinor(0)
+            else:
+                self.pythonName( "python2" )
+                self.pythonMajor(2)
+                try:
+                    self.pythonMinor(int(self.pythonVersion().split(".")[1]))
+                except:
+                    self.pythonMinor(0)
+            minor = int(self.pythonVersion().split(".")[0])
+            gcc = sys.version
+            self.arch()
+            if '\n' in gcc:
+                gcc = gcc.split('\n')[1]
+            elif '[' in gcc and ']' in gcc:
+                gcc = gcc.split('[')[1].split(']')[0]
+            if gcc=='GCC':
+                gcc= '[GCC]'
+            if ' (Red Hat' in gcc:
+                gcc = gcc.split(' (Red Hat')[0] + ']'
+            if '[PyPy ' in gcc and 'with' in gcc:
+                pythonVersion = gcc.split('with')[0].split('[')[1].strip()
+                self.pythonVersion("%s (%s)" % (self.pythonVersion(), pythonVersion))
+                gcc = '[' + gcc.split('with ')[1]
+                if self.pythonName() == "python3":
+                    self.pythonName( "pypy3")
+                else:
+                    self.pythonName( "pypy" )
+            try:
+                if platform.libc_ver()[0]!='':
+                    self.libcName( platform.libc_ver()[0] )
+            except:
+                self.libcName("Most probably MSC (version unknow)")
+            if 'AMD64' in gcc:
+                self.__arch__ = 'amd64'
+                if 'MSC' in gcc:
+                    self.libcName('msc')
+            elif 'AMD32' in gcc:
+                self.libcName('msc')
+                self.__arch__ = 'x86'
+            if 'clang' in gcc:
+                self.libcName('clang')
+            self.libcVersion(gcc)
+            self.osVersion()
+            self.shellCmd()
+            self.this()
+            self.linuxDistro()
+            if self.libcName()  == '' and self.shellCmd() == '/bin/ash':
+                self.libcName('muslc')
+            if self.arch() != '':
+                if self.libcName() == '':
+                    self.binaryVersion('%s-' % (self.arch()))
+                else:
+                    self.binaryVersion('%s-%s' % (self.arch(), self.libcName()))
+        self.__system_checked__ = True
+
+    def globalFolder(self, id=1):
+        path = ['/usr/bin','/usr/local/bin']
+        if id>=0 and id<2:
+            return path[id]
+        return ''
+
+    def is_alpine(self):
+        return self.osVersion().startswith('Alpine')
+
+    def is_debian(self):
+        return self.osVersion().startswith('Ubuntu') or self.osVersion().startswith('Debian') or self.osVersion().startswith('Raspbian') or self.is_mint() or self.is_kali()
+
+    def is_fedora(self):
+        return self.osVersion().startswith('Amazon Linux') or self.osVersion().startswith('Fedora')
+
+    def is_kali(self):
+        return self.osVersion().startswith('Kali')
+
+    def is_linux(self):
+        return not (self.osVersion()=='windows' or self.osVersion()=='macOS' or self.osVersion().startswith('macOS')) 
+
+    def is_mac(self):
+        return self.osVersion()=='macOS'
+
+    def is_mint(self):
+        return self.osVersion().startswith('Linux Mint')
+
+    def is_window(self):
+        return self.osVersion()=='windows'
+
+    def is_ubuntu(self):
+        return self.osVersion().startswith('Ubuntu')
+
+    def is_opensuse(self):
+        return self.osVersion().startswith('openSUSE')
+
+    def is_redhat(self):
+        return self.osVersion().startswith('CentOS') or self.osVersion().startswith('Red Hat')
+
+    def linuxDistro(self):
+        if not hasattr(self, '__distro__'):
+            self.__distro__=''
+            self.__os_major__=0
+            self.__os_minor__=0
+            if os.path.isfile("/etc/os-release"):
+                fin = self.open("/etc/os-release", "rt", use_history=False)
+                self.__distro__ = ''
+                for line in fin:
+                    line = line.strip()
+                    if line.startswith('PRETTY_NAME='):
+                        if '"' in line:
+                            self.__distro__ = line.split('"')[1]
+                        else:
+                            self.__distro__ = line.split('=')[1]
+                    if line.startswith('VERSION_ID='):
+                        if '"' in line:
+                            version_id = line.split('"')[1]
+                        else:
+                            version_id = line.split('=')[1]
+                        if "." in version_id:
+                            major = version_id.split(".")[0]
+                            minor = version_id.split(".")[1]
+                            if major.isdigit():
+                                self.__os_major__=int(major)
+                            if minor.isdigit():
+                                self.__os_minor__=int(minor)
+                        elif version_id.isdigit():
+                            self.__os_major__=int(version_id)
+                if 'Alpine' in self.__distro__:
+                    self.shellCmd("/bin/ash")
+        return self.__distro__
+
+    def osVersion(self):
+        if self.pathexists("/etc/os-release"):
+            self.linuxDistro()
+        if hasattr(self,'__distro__'):
+            return self.__distro__
+        self.__distro__  = ''
+        if os.name == 'nt':
+            self.__distro__='windows'
+        elif self.shellCmd() != '':
+            result, stdout = self.shell(command=["sw_vers","-productName"],ignoreShell=True)
+            if result:
+                self.__distro__ = stdout.strip()
+        return self.__distro__
+
+    def pathexists(self, path, use_history=False):
+        if self.isGitBash():
+            path=self.path_to_dos(path)
+        if use_history:
+            if self.isCmd() and self.hasFunc("history_dir"):
+                self.history_dir(path)
+            elif self.hasFunc("history_ls"):
+                self.history_ls(path)
+        return os.path.exists(path)
+
+    def pythonVersion(self, version=None):
+        if version is not None:
+            self.__python_version__ = version.strip()
+            return self
+        elif  hasattr(self, '__python_version__'):
+            return self.__python_version__ 
+        self.__python_version__ = sys.version
+        if len(self.__python_version__.split('\n'))>1:
+            self.__python_version__ =  self.__python_version__.split('\n')[0].strip()
+        if len( self.__python_version__.split('['))>1:
+            self.__python_version__ =  self.__python_version__.split('[')[0].strip()
+        if len( self.__python_version__.split('('))>1:
+            self.__python_version__ =  self.__python_version__.split('(')[0].strip()
+        return self.__python_version__
+
+    def root_or_sudo(self):
+        if not hasattr(self, '__history_check_root__'):
+            self.__history_check_root__ = True
+            self.cmd_history("# ** Check if user is root or can sudo **", currentframe().f_lineno)
+        # root_or_sudo() Check user is root or has sudo privilege and assuming linux
+        if not self.is_linux():
+            return False
+        if self.username()=='root':
+            return True
+        if not hasattr(self, '__asked_sudo__'):
+            if self.allowInstallLocal():
+                return False
+            self.__asked_sudo__=True
+            if self.ask_not_root():
+                self.sudo_test()
+        return self.is_sudo()
+
+    def ubuntu_version(self):
+        if not hasattr(self,'__ubuntu_version__'):
+            if self.osVersion().startswith("Ubuntu"):
+                version=self.osVersion().split(' ')
+                length=len(version)
+                if length>1:
+                    self.__ubuntu_version__=version[length - 1]
+            else:
+                self.__ubuntu_version__=''
+        return self.__ubuntu_version__
+
+    def uname(self, switch, ignoreErr=True):
+        stderr = ''
+        stdout = ''
+        command = 'uname %s' % switch
+        if self.isLinuxShell():
+            uname = self.which_cmd('uname')
+            command = '%s %s' % (uname, switch)
+            if uname != '':
+                stdout,stderr = Popen([uname,switch],stdin=PIPE,stdout=PIPE,\
+                    stderr=PIPE,universal_newlines=True).communicate('\n')
+            else:
+                return False, 'uname not found'
+        if self.isGitBash():
+            winpty = self.where_cmd('winpty.exe')
+            uname = self.where_cmd('uname.exe')
+            stdout,stderr = Popen([winpty, uname,switch],stdin=PIPE,stdout=PIPE,\
+                stderr=PIPE,universal_newlines=True).communicate('\n')
+            if stderr.strip().lower() == 'stdin is not a tty':
+                stdout,stderr = Popen([uname,switch],stdin=PIPE,stdout=PIPE,\
+                    stderr=PIPE,universal_newlines=True).communicate('\n')
+        elif self.isCmd():
+            stdout,stderr = Popen([self.shellCmd(),'/c',command],stdin=PIPE,stdout=PIPE,\
+                stderr=PIPE,universal_newlines=True).communicate('\n')
+        else:
+            # Assume /bin/sh as default shell
+            uname = self.which_cmd('uname')
+            if uname != '':
+                stdout,stderr = Popen([uname,switch],stdin=PIPE,stdout=PIPE,\
+                    stderr=PIPE,universal_newlines=True).communicate('\n')
+            else:
+                return False, 'uname not found'
+        if stderr != "" and not ignoreErr:
+            self.msg_error(command, stderr)
+            return False, stderr
+        else:
+            return True, stdout
+
+    def uname_a(self, ignoreErr=True):
+        return self.uname('-a')
+
+    def uname_m(self, ignoreErr=True):
+        return self.uname('-m')
+
+class AppMsg(OS):
+
+    def __init__(self, this = None):
+        try:
+            super().__init__(this)
+        except:
+            super(AppMsg, self).__init__(this)
+
+    def msg_alpine_detected(self, title="OPERATION SYSTEM"):
+        self.infoMsg("Alpine Detected!", title)
+
+    def msg_both_local_global(self, title="INSTALLED TWICE"):
+        self.criticalMsg("It may causes error if you have installed both local version and Global Version!\n  Please uninstall local version by,\n    %s uninstall" % self.appPath(), title)
+
+    def msg_download_error(self, file):
+        if not hasattr(self,'__msgshown_download_error__'):
+            self.criticalMsg("Download file error: %s" % file, "DOWNLOAD ERROR")
+            self.__msgshown_download_error__=True
+
+    def msg_download_url_error(self, url, code):
+        if not hasattr(self,'__msgshown_download_error__'):
+            self.criticalMsg("Url: %s\n  HTTP code: %s" % (url, code), "DOWNLOAD ERROR")
+            self.__msgshown_download_error__=True
+
+    def msg_download_not_found(self, file):
+        self.criticalMsg("Downloaded File: %s" % file, "NOT FOUND")
+
+    def msg_downloaded(self, fname="", title="DOWNLOADED"):
+        self.safeMsg("File downloaded to: %s" % fname, title)
+
+    def msg_downloading(self, url="", title="DOWNLOAD FILES"):
+        self.infoMsg("Downloading: %s ..." % url, title)
+
+    def msg_error(self, command="", stderr="", title="ERROR"):
+        self.criticalMsg("Error in %s: %s" % (command, stderr), title)
+
+    def msg_extraction_error(self, file="", title="DOWNLOAD ERROR"):
+        self.criticalMsg("File Extraction error: %s not found" % file, title)
+
+    def msg_incompatiable_os(self, title="INSTALL"):
+        self.criticalMsg("Using incompatible OS or not able to use sudo", title)
+
+    def msg_installation_failed(self, title="INSTALLATION"):
+        self.criticalMsg("Installation failed!", title)
+
+    def msg_global_already(self, title="SELF INSTALL"):
+        self.infoMsg("Global Installation installed already!", title)
+
+    def msg_global_failed(self, title="SELF UNINSTALL"):
+        self.criticalMsg("Global uninstall failed!", title)
+
+    def msg_info(self, usage=None):
+        if usage is None:
+            usage=self.usage()
+        if self.isCmd():
+            msg1="%s.bat (%s.%s) by %s on %s" % (self.appName(),self.majorVersion(),\
+                self.minorVersion(),self.author(),self.lastUpdate())
+        else:
+            msg1="%s (%s.%s) by %s on %s" % (self.appName(),self.majorVersion(),\
+                self.minorVersion(),self.author(),self.lastUpdate())
+        if self.isGlobal():
+            app = "You are using the GLOBAL INSTALLED version, location:"
+        elif self.is_local():
+            app = "You are using the LOCAL INSTALLED version, location:"
+        else :
+            app = "You are using an UNINSTALLED version, location:" 
+        python_exe = self.executable()
+        if python_exe == '':
+            python_exe = self.pythonName()
+        msg = [
+            msg1, 
+            '',
+            '%s' % app,
+            '    %s' % self.selfLocation(),
+            '', 
+            "Basic Usage:",
+            "    %s" % usage,
+            '',
+            'Please visit our homepage: ',
+            '    "%s"' % self.homepage(),
+            '',
+            'Installation command:',
+            '    curl -fsSL %s | %s' % (self.downloadUrl(), python_exe),
+            ''
+        ]
+        starLine=[]
+        space=[]
+        spaces=[[],[],[],[],[],[],[],[],[],[],[],[],[],[]]
+        if self.targetApp() != '':
+            spaces.append([])
+            spaces.append([])
+            msg.append('Target Application:')
+            if self.isCmd() or self.isGitBash():
+                file3 = self.localTargetInstallPath()
+                if self.pathexists(file3):
+                    msg.append('    %s' % file3)
+                    spaces.append([])
+            else:
+                file1 = "%s/%s" % (self.globalFolder(0), self.targetApp())
+                file2 = "%s/%s" % (self.globalFolder(1), self.targetApp())
+                file3 = self.localTargetInstallPath()
+                if self.pathexists(file1):
+                    msg.append('    %s' % file1)
+                    spaces.append([])
+                if self.pathexists(file2):
+                    msg.append('    %s' % file2)
+                    spaces.append([])
+                if self.pathexists(file3):
+                    msg.append('    %s' % file3)
+                    spaces.append([])
+            msg.append('')
+        maxLen=len(msg[0])
+        if self.downloadUrl() == '':
+            if self.homepage() == '':
+                max_line = len(spaces) - 3
+            else:
+                max_line = len(spaces) - 2
+        else:
+            max_line = len(spaces) - 1
+        for n in range(1, max_line):
+            if len(msg[n]) > maxLen :
+                maxLen=len(msg[n])
+        for n in range(0, max_line):
+            for i in range(1,maxLen - len(msg[n]) + 1):
+                spaces[n].append(' ')
+            msg[n]=msg[n] + ''.join(spaces[n])
+        for i in range(1,maxLen + 5):
+            starLine.append("*")
+        for i in range(1,maxLen + 1):
+            space.append(" ")
+        self.prn(''.join(starLine))
+        self.prn('* %s *' % ''.join(space))
+        for n in range(0, max_line):
+            self.prn('* %s *' % msg[n])
+        self.prn('* %s *' % ''.join(space))
+        self.prn(''.join(starLine))
+
+    def msg_install_app_global(self, title="INSTALL"):
+        if self.isCmd() or self.isGitBash():
+            self.msg_install(location='Globally', app="%s.bat" % self.appName(), title=title)
+        else:
+            self.msg_install(location='Globally', app=self.appName(), title=title)
+
+    def msg_install_app_local(self, title="INSTALL"):
+        if self.isCmd() or self.isGitBash():
+            self.msg_install(location='Locally', app="%s.bat" % self.appName(), title=title)
+        else:
+            self.msg_install(location='Locally', app=self.appName(), title=title)
+
+    def msg_install(self, location="", app="", title="INSTALL"):
+        startSh =  ""   # for ash, cmd, gitbash
+        if location == 'Locally':
+            if self.osVersion() == 'macOS':
+                startSh = "  Please type 'hash -r' and 'source ~/.zshenv' to refresh zsh shell hash!\n  Then, you can "
+            elif self.shellCmd() != '/bin/ash' and self.isLinuxShell():
+                startSh =  "  Please type 'hash -r' and 'source ~/.bashrc' to refresh bash shell hash!\n  Then, you can "
+            self.safeMsg("Installed %s! \n%s  type '%s' to run!" % (location, startSh, app), title)
+        else:
+            self.safeMsg("Installed %s! \n    type '%s' to run!" % (location, app), title)
+
+    def msg_install_target_global(self, title="INSTALL"):
+        if self.isCmd() or self.isGitBash():
+            self.msg_install(location='Globally', app="%s.exe" % self.targetApp(), title=title)
+        else:
+            self.msg_install(location='Globally', app=self.targetApp(), title=title)
+
+    def msg_install_target_local(self, title="INSTALL"):
+        if self.isCmd() or self.isGitBash():
+            self.msg_install(location='Locally', app="%s.exe" % self.targetApp(), title=title)
+        else:
+            self.msg_install(location='Locally', app=self.targetApp(), title=title)
+
+    def msg_latest(self, title="CHECK VERSION"):
+        if self.is_local():
+            self.msg_latest_global(title)
+        elif self.is_local():
+            self.msg_latest_local(title)
+        else:
+            self.infoMsg("You are using latest (%s.%s) already!" % (self.majorVersion(),self.minorVersion()), title)
+
+    def msg_latest_global(self, title="CHECK VERSION"):
+        self.infoMsg("You are using latest (%s.%s) Global Installation's copy already!" % (self.majorVersion(),self.minorVersion()), title)
+
+    def msg_latest_local(self, title="CHECK VERSION"):
+        self.infoMsg("You are using latest (%s.%s) Local Installation's copy already!" % (self.majorVersion(),self.minorVersion()), title)
+
+    def msg_latest_available(self, title="CHECK UPDATE"):
+        self.infoMsg("Latest Version = %s\n  Update is available" % self.latest_version(), title)
+
+    def msg_linux_only(self):
+        self.criticalMsg("This programs required linux only.", "LINUX ONLY")
+
+    def msg_local_already(self, title="SELF INSTALL"):
+        self.infoMsg("Local Installation installed already!", title)
+
+    def msg_no_global(self, title="GLOBAL UNINSTALL"):
+        self.infoMsg("You don't have any local installation.", title)
+
+    def msg_no_local(self, title="LOCAL UNINSTALL"):
+        self.infoMsg("You don't have any local installation.", title)
+
+    def msg_no_server(self, title="CONNECTION FAILED"):
+        self.criticalMsg("Cannot communicate with server", title)
+
+    def msg_no_installation(self, title="UNINSTALL"):
+        self.infoMsg("You don't have any global or local installation.", title)
+
+    def msg_not_compatible_os(self, title="INSTALL"):
+        self.infoMsg("Your OS is not compatible: %s" % self.osVersion(), title)
+
+    def msg_not_working_docker(self, title="SYSTEM DAEMON"):
+        self.criticalMsg("systemctl or journalctl cannot work properly in docker container.", title)
+
+    def msg_root_continue(self, title="SELF INSTALL"):
+        self.infoMsg("You must be root or sudo to continue installation!", title)
+
+    def msg_old_global(self, title="SELF INSTALL"):
+        self.infoMsg("You are using an old (%s.%s) Global Installation's copy already!" % (self.majorVersion(),self.minorVersion()), title)
+
+    def msg_old_local(self, title="SELF INSTALL"):
+        self.infoMsg("You are using an old (%s.%s) Local Installation's copy already!" % (self.majorVersion(),self.minorVersion()), title)
+
+    def msg_permission_denied(self, path="", title=""):
+        self.criticalMsg("Permission denied: %s" % path, title)
+
+    def msg_sudo(self, title="SUDO TEST"):
+        if not hasattr(self,'__msg_sudo_verified__'):
+            self.__msg_sudo_verified__ = True
+            self.infoMsg("Your sudo privilege has been verified.", title)
+
+    def msg_sudo_not_installed(self, title="SUDO TEST"):
+        if not hasattr(self,'__msg_sudo_not_installed__'):
+            self.__msg_sudo_not_installed__ = True
+            self.infoMsg("'SUDO' has not installed in your system.", title)
+            if self.osVersion().startswith("Alpine"):
+                self.safeMsg("Please use the following command to install sudo:\n    apk add sudo", title)
+
+    def msg_sudo_failed(self, title="SUDO FAILED"):
+        self.criticalMsg("You should be root or sudo to install globally.", title)
+
+    def msg_system_check(self, title="START"):
+        # msg_system_check(), this message only shown when downloading files
+        if not hasattr(self,'__system_msg_shown__'):
+            self.safeMsg("Now checking your operation system!", title)
+            self.prn("    AppBase Version: %s" % AppBase.VERSION)
+            self.prn("    Python: %s" % self.pythonVersion())
+            self.prn("    C Library: %s" % self.libcVersion())
+            self.prn("    Operation System: %s" % self.osVersion())
+            self.prn("    Architecture: %s" % self.arch())
+            self.prn("    Current User: %s" % self.username())
+            self.prn("    Shell: %s" % self.shellCmd())
+            self.prn("    Python Executable: %s" % self.executable())
+            self.prn("    python2 location: %s" % self.python2())
+            self.prn("    python3 location: %s" % self.python3())
+            self.prn("    conda location: %s" % self.which_cmd('conda', default=""))
+            self.prn("    Inside docker container: %s" % self.is_docker_container())
+            self.prn("    Cython String: %s" % self.cythonVersion())
+            self.prn("    Binary Type: %s" % self.binaryVersion() )
+            self.prn("")
+            self.__system_msg_shown__ = True
+
+    def msg_temp_folder_failed(self, folder="", title=""):
+        if not hasattr(self,'__msg_temp_error__'):
+            self.__msg_temp_error__=True
+            self.criticalMsg("Cannot access or create temp folder" % folder, title)
+
+    def msg_timeout(self, file="", title="ERROR"):
+        self.criticalMsg("Time out in downloading %s" % (file), title)
+
+    def msg_too_many_backup(self):
+        self.criticalMsg("Too many backup created.", "BACKUP CREATION FAILED")
+
+    def msg_unintall_global(self, title="GLOBAL UNINSTALL"):
+        self.safeMsg("You have uninstalled successfully.", title)
+
+    def msg_uninstall_global_failed(self, title="UNINSTALL FAILED"):
+        self.criticalMsg("Failed to uninstall globally", title)
+
+    def msg_uninstall_local(self, title="LOCAL UNINSTALL"):
+        self.safeMsg("You have uninstalled successfully.", title)
+
+    def msg_uninstall_local_failed(self, title="UNINSTALL FAILED"):
+        self.criticalMsg("Failed to uninstall locally", title)
+
+    def msg_unintall_need_root(self, title="GLOBAL UNINSTALL"):
+        self.criticalMsg("You should be root or sudo to uninstall globally.", title)
+
+    def msg_unknown_parameter(self, title="UNKNOWN PARAMETER"):
+        self.criticalMsg("Unknown parameter '%s'" % self.cmd(), title)
+
+    def msg_user_found(self, username="", title="CREATING USER"):
+        self.infoMsg("Existing user group: %s found." % username, title)
+
+    def msg_user_group_found(self, usergroup="", title="CREATING GROUP"):
+        self.infoMsg("Existing user: %s found." % usergroup, title)
+
+    def msg_wrong_shell(self, cmd="", title=""):
+        self.infoMsg("You are using wrong shell to execute: '%s'" % cmd)
+
+class Shell(AppMsg):
+
+    def __init__(self, this = None):
+        try:
+            super().__init__(this)
+        except:
+            super(Shell, self).__init__(this)
 
     def chdir(self, path, line_num=None):
         if self.isCmd() or self.isGitBash():
@@ -520,7 +1273,7 @@ class Shell(CmdHistory, Sh):
         return False
     
     def chmod_x(self, filePath="", use_history=True, useSudo=False):
-        if self.is_windows():
+        if self.is_window():
             return False
         return self.chmod(filePath=filePath, switch="+x", use_history=use_history, useSudo=useSudo)
 
@@ -555,10 +1308,9 @@ class Shell(CmdHistory, Sh):
         else:
             cp = self.which_cmd('cp')
             if useSudo:
-                if self.sudo_cmd!="":
-                    cmd = 'sudo %s %s %s' % (cp,filePath1,filePath2)
+                cmd = '%s %s -rP %s %s' % (self.sudo_cmd(), cp,filePath1,filePath2)
             else:
-                cmd = '%s %s %s' % (cp,filePath1,filePath2)
+                cmd = '%s -rP %s %s' % (cp,filePath1,filePath2)
         if cmd=="":
             return False 
         if use_history:
@@ -1029,744 +1781,14 @@ class Shell(CmdHistory, Sh):
     def which_uname(self):
         return self.which_cmd('uname', '/usr/bin/uname')
 
-class AppHistory(Shell):
+class Installer(Shell):
 
-    def history_add_group(self, groupname, line_num=None):
-        self.cmd_history("# ** Adding user group: %s **" % groupname, line_num)
-
-    def history_add_user(self, username, line_num=None):
-        self.cmd_history("# ** Adding user: %s **" % username, line_num)
-
-    def history_backup_nginx_conf(self, line_num=None):
-        self.cmd_history("# ** Try to backup nginx config **", line_num)
-
-    def history_cd(self, path="", line_num=None):
-        self.cmd_history("cd %s" % path, line_num)
-
-    def history_cd_decompress(self, line_num=None):
-        self.cmd_history("# ** Change to temp folder to uncompress **", line_num)
-
-    def history_change_target_mode(self, line_num=None):
-        self.cmd_history("# ** Change target to executable **", line_num)
-
-    def history_check_ash(self, line_num=None):
-        self.cmd_history("# ** Try to check and modify ~/.profile **", line_num)
-
-    def history_check_bash(self, line_num=None):
-        self.cmd_history("# ** Try to check and modify ~/.bashrc **", line_num)
-
-    def history_check_copy_sudoers(self, line_num=None):
-        self.cmd_history("# ** Try to check existence or copy from temp to /etc/sudoers.d/ **" , line_num)
-
-    def history_check_mkdir(self, line_num=None):
-        self.cmd_history("# ** Check and create directory **", line_num)
-
-    def history_check_exists(self, name="", line_num=None):
-        self.cmd_history("# ** Check existence of %s **" % name, line_num)
-
-    def history_check_group_exists(self, line_num=None):
-        self.cmd_history("# ** Try to check if the user group exists  **", line_num)
-
-    def history_check_rc_update(self, line_num=None):
-        self.cmd_history("# ** Try to check sudo and add rc-update **" , line_num)
-
-    def history_check_repositories(self, line_num=None):
-        self.cmd_history("# ** Check and update apk repositories **", line_num)
-
-    def history_check_user_exists(self, line_num=None):
-        self.cmd_history("# ** Try to check if the user exists  **", line_num)
-
-    def history_copy_static_lib(self, so_file, line_num=None):
-        self.cmd_history("# ** Copying static library file: %s **" % so_file, line_num)
-
-    def history_copy_temp(self, line_num=None):
-        self.cmd_history("# ** Try to copy from temp to target **" , line_num)
-
-    def history_copy_uncompressed(self, line_num=None):
-        self.cmd_history("# ** Copy uncompressed file to target **", line_num)
-
-    def history_change_ownership_of_folder(self, line_num=None):
-        self.cmd_history("# ** Try to change ownership of folder **", line_num)
-
-    def history_check_zsh(self, line_num=None):
-        self.cmd_history("# ** Try to check and modify ~/.zshenv **", line_num)
-
-    def history_compress(self, target_file, line_num=None):
-        self.cmd_history("# ** Trying to create compressed file %s for container **" % target_file, line_num)
-
-    def history_create_soft_link(self, line_num=None):
-        self.cmd_history("# ** Try to create soft link **", line_num)
-
-    def history_curl_check(self, line_num=None):
-        self.cmd_history("# ** Using curl to check if url is ok **", line_num)
-
-    def history_curl_download(self, line_num=None):
-        self.cmd_history("# ** Using curl for downloading file **", line_num)
-
-    def history_dir(self, path, line_num=None):
-        self.cmd_history("dir %s" % path, line_num)
-
-    def history_group_exists(self, groupname, line_num=None):
-        self.cmd_history("# ** User group: %s exists and no adding for it **" % groupname, line_num)
-
-    def history_install_package(self, package, line_num):
-        self.cmd_history("# ** Install package: %s **" % package, line_num)
-
-    def history_ls(self, path, line_num=None):
-        self.cmd_history("ls %s" % path, line_num)
-
-    def history_link_exists(self, path, line_num=None):
-        self.cmd_history("# link exists: %s, no need to create short link" % path, line_num)
-
-    def history_location_found(self, location, line_num=None):
-        self.cmd_history("# found: %s" % location, line_num)
-
-    def history_open_as_source(self, f, line_num=None):
-        self.cmd_history("# ** Open %s as source file **" % f, line_num)
-
-    def history_open_as_target(self, f, line_num=None):
-        self.cmd_history("# ** Open %s as the location for writing **" % f, line_num)
-
-    def history_package_exists(self, package, line_num=None):
-        self.cmd_history("# Package: %s exists and no installation for it **" % package, line_num)
-
-    def history_remove_downloaded(self, line_num=None):
-        self.cmd_history("# ** Try to remove downloaded file **", line_num)
-
-    def history_remove_folder(self, folder, line_num=None):
-        self.cmd_history("# ** Try to remove folder: %s **" % folder, line_num)
-
-    def history_remove_previous_global(self, line_num=None):
-        self.cmd_history("# ** Try to remove previous installed global version **", line_num)
-
-    def history_remove_previous_local(self, line_num=None):
-        self.cmd_history("# ** Try to remove previous installed local version **", line_num)
-
-    def history_remove_sudoer(self, line_num=None):
-        self.cmd_history("# ** Try to check and remove sudoer file **", line_num)
-
-    def history_remove_source(self, line_num=None):
-        self.cmd_history("# ** Try to remove source file **", line_num)
-
-    def history_remove_temp(self, line_num=None):
-        self.cmd_history("# ** Try to remove temp file **", line_num)
-
-    def history_remove_uncompressed(self, line_num=None):
-        self.cmd_history("# ** Try to remove uncompressed file **", line_num)
-
-    def history_remove_user(self, username, line_num=None):
-        self.cmd_history("# ** Removing user: %s **" % username, line_num)
-
-    def history_update_repository(self, line_num=None):
-        self.cmd_history("# ** Try to update repository first **", line_num)
-
-    def history_uninstall_package(self, package, line_num=None):
-        self.cmd_history("# ** Uninstall package: %s **" % package, line_num)
-
-    def history_user_exists(self, username, line_num=None):
-        self.cmd_history("# ** User: %s exists and no adding for it **" % username, line_num)
-
-class OS(AppHistory):
-
-    def alpine_version(self):
-        if not hasattr(self,'__alpine_version__'):
-            if self.osVersion().startswith("Alpine"):
-                version=self.osVersion().split(' ')
-                length=len(version)
-                if length>1:
-                    self.__alpine_version__=version[length - 1]
-            else:
-                self.__alpine_version__=''
-        return self.__alpine_version__
-
-    def arch(self):
-        if not hasattr(self, '__arch__'):
-            if self.isCmd():
-                self.__arch__ = 'amd64'
-            else:
-                result2, stdout2 = self.uname_a()
-                result, stdout = self.uname_m()
-                if result:
-                    self.__arch__ = stdout.strip()
-                    # "aarch64" and "arm64" are the same thing. AArch64 is the official name for the 64-bit ARM architecture, 
-                    # but some people prefer to call it "ARM64" as a continuation of 32-bit ARM.
-                    if self.__arch__ == 'arm64':
-                        self.__arch__ = 'aarch64'
-                    elif 'ARM64' in stdout2:
-                        self.__arch__ = 'aarch64'
-                    # X86_64 and AMD64 are different names for the same thing
-                    elif self.__arch__ == 'x86_64':
-                        self.__arch__ = 'amd64'
-                else:
-                    self.__arch__=''
-        return self.__arch__
-
-    def binaryVersion(self, version=None):
-        if version is not None:
-            self.__binary_version__ = version
-            return self 
-        elif not hasattr(self,'__binary_version__'):
-            self.__binary_version__ = ''
-        return self.__binary_version__
-
-    def check_system(self):
-        if self.pythonVersion().split(".")[0] =="3":
-            self.pythonName( "python3" )
-            self.pythonMajor(3)
-            try:
-                self.pythonMinor(int(self.pythonVersion().split(".")[1]))
-            except:
-                self.pythonMinor(0)
-        else:
-            self.pythonName( "python2" )
-            self.pythonMajor(2)
-            try:
-                self.pythonMinor(int(self.pythonVersion().split(".")[1]))
-            except:
-                self.pythonMinor(0)
-        minor = int(self.pythonVersion().split(".")[0])
-        gcc = sys.version
-        self.arch()
-        if '\n' in gcc:
-            gcc = gcc.split('\n')[1]
-        elif '[' in gcc and ']' in gcc:
-            gcc = gcc.split('[')[1].split(']')[0]
-        if gcc=='GCC':
-            gcc= '[GCC]'
-        if ' (Red Hat' in gcc:
-            gcc = gcc.split(' (Red Hat')[0] + ']'
-        if '[PyPy ' in gcc and 'with' in gcc:
-            pythonVersion = gcc.split('with')[0].split('[')[1].strip()
-            self.pythonVersion("%s (%s)" % (self.pythonVersion(), pythonVersion))
-            gcc = '[' + gcc.split('with ')[1]
-            if self.pythonName() == "python3":
-                self.pythonName( "pypy3")
-            else:
-                self.pythonName( "pypy" )
+    def __init__(self, this = None):
         try:
-            if platform.libc_ver()[0]!='':
-                self.libcName( platform.libc_ver()[0] )
+            super().__init__(this)
         except:
-            self.libcName("Most probably MSC (version unknow)")
-        if 'AMD64' in gcc:
-            self.__arch__ = 'amd64'
-            if 'MSC' in gcc:
-                self.libcName('msc')
-        elif 'AMD32' in gcc:
-            self.libcName('msc')
-            self.__arch__ = 'x86'
-        if 'clang' in gcc:
-            self.libcName('clang')
-        self.libcVersion(gcc)
-        self.osVersion()
-        self.shellCmd()
-        self.this()
-        self.linuxDistro()
-        if self.libcName()  == '' and self.shellCmd() == '/bin/ash':
-            self.libcName('muslc')
-        if self.arch() != '':
-            if self.libcName() == '':
-                self.binaryVersion('%s-' % (self.arch()))
-            else:
-                self.binaryVersion('%s-%s' % (self.arch(), self.libcName()))
-
-    def is_alpine(self):
-        return self.osVersion().startswith('Alpine')
-
-    def is_debian(self):
-        return self.osVersion().startswith('Ubuntu') or self.osVersion().startswith('Debian') or self.osVersion().startswith('Raspbian') or self.is_mint() or self.is_kali()
-
-    def is_fedora(self):
-        return self.osVersion().startswith('Amazon Linux') or self.osVersion().startswith('Fedora')
-
-    def is_kali(self):
-        return self.osVersion().startswith('Kali')
-
-    def is_linux(self):
-        return not (self.osVersion()=='windows' or self.osVersion()=='macOS' or self.osVersion().startswith('macOS')) 
-
-    def is_mac(self):
-        return self.osVersion()=='macOS'
-
-    def is_mint(self):
-        return self.osVersion().startswith('Linux Mint')
-
-    def is_window(self):
-        return self.osVersion()=='windows'
-
-    def is_ubuntu(self):
-        return self.osVersion().startswith('Ubuntu')
-
-    def is_opensuse(self):
-        return self.osVersion().startswith('openSUSE')
-
-    def is_redhat(self):
-        return self.osVersion().startswith('CentOS') or self.osVersion().startswith('Red Hat')
-
-    def is_sudo(self, sudo=None):
-        if sudo is not None:
-            self.__isSudo__=sudo
-            return self
-        elif not hasattr(self, '__isSudo__'):
-            self.__isSudo__=False
-        return self.__isSudo__
-
-    def libcName(self, name=None):
-        if name is not None:
-            self.__libc_name__ = name
-            return self
-        elif not hasattr(self, '__libc_name__'):
-            self.__libc_name__ = ''
-        return self.__libc_name__
-
-    def libcVersion(self, version=None):
-        if version is not None:
-            self.__libc_version__ = version
-            return self
-        elif not hasattr(self, '__libc_version__'):
-            self.__libc_version__ = ''
-        return self.__libc_version__
-
-    def linuxDistro(self):
-        if not hasattr(self, '__distro__'):
-            self.__distro__=''
-            self.__os_major__=0
-            self.__os_minor__=0
-            if os.path.isfile("/etc/os-release"):
-                fin = self.open("/etc/os-release", "rt", use_history=False)
-                self.__distro__ = ''
-                for line in fin:
-                    line = line.strip()
-                    if line.startswith('PRETTY_NAME='):
-                        if '"' in line:
-                            self.__distro__ = line.split('"')[1]
-                        else:
-                            self.__distro__ = line.split('=')[1]
-                    if line.startswith('VERSION_ID='):
-                        if '"' in line:
-                            version_id = line.split('"')[1]
-                        else:
-                            version_id = line.split('=')[1]
-                        if "." in version_id:
-                            major = version_id.split(".")[0]
-                            minor = version_id.split(".")[1]
-                            if major.isdigit():
-                                self.__os_major__=int(major)
-                            if minor.isdigit():
-                                self.__os_minor__=int(minor)
-                        elif version_id.isdigit():
-                            self.__os_major__=int(version_id)
-                if 'Alpine' in self.__distro__:
-                    self.shellCmd("/bin/ash")
-        return self.__distro__
-
-    def os_major_version(self):
-        if not hasattr(self, '__os_major__'):
-            self.__os_major__=0
-            self.linuxDistro()
-        return self.__os_major__
-
-    def os_minor_version(self):
-        if not hasattr(self, '__os_minor__'):
-            self.__os_minor__=0
-            self.linuxDistro()
-        return self.__os_minor__
-
-    def osVersion(self):
-        if self.pathexists("/etc/os-release"):
-            self.linuxDistro()
-        if hasattr(self,'__distro__'):
-            return self.__distro__
-        self.__distro__  = ''
-        if os.name == 'nt':
-            self.__distro__='windows'
-        elif self.shellCmd() != '':
-            result, stdout = self.shell(command=["sw_vers","-productName"],ignoreShell=True)
-            if result:
-                self.__distro__ = stdout.strip()
-        return self.__distro__
-
-    def pythonVersion(self, version=None):
-        if version is not None:
-            self.__python_version__ = version.strip()
-            return self
-        elif  hasattr(self, '__python_version__'):
-            return self.__python_version__ 
-        self.__python_version__ = sys.version
-        if len(self.__python_version__.split('\n'))>1:
-            self.__python_version__ =  self.__python_version__.split('\n')[0].strip()
-        if len( self.__python_version__.split('['))>1:
-            self.__python_version__ =  self.__python_version__.split('[')[0].strip()
-        if len( self.__python_version__.split('('))>1:
-            self.__python_version__ =  self.__python_version__.split('(')[0].strip()
-        return self.__python_version__
-
-    def root_or_sudo(self):
-        if not hasattr(self, '__history_check_root__'):
-            self.__history_check_root__ = True
-            self.cmd_history("# ** Check if user is root or can sudo **", currentframe().f_lineno)
-        # root_or_sudo() Check user is root or has sudo privilege and assuming linux
-        if not self.is_linux():
-            return False
-        if self.username()=='root':
-            return True
-        if not hasattr(self, '__asked_sudo__'):
-            if self.allowInstallLocal():
-                return False
-            self.__asked_sudo__=True
-            if self.ask_not_root():
-                self.sudo_test()
-        return self.is_sudo()
-
-    def ubuntu_version(self):
-        if not hasattr(self,'__ubuntu_version__'):
-            if self.osVersion().startswith("Ubuntu"):
-                version=self.osVersion().split(' ')
-                length=len(version)
-                if length>1:
-                    self.__ubuntu_version__=version[length - 1]
-            else:
-                self.__ubuntu_version__=''
-        return self.__ubuntu_version__
-
-    def uname(self, switch, ignoreErr=True):
-        stderr = ''
-        stdout = ''
-        command = 'uname %s' % switch
-        if self.isLinuxShell():
-            uname = self.which_cmd('uname')
-            command = '%s %s' % (uname, switch)
-            if uname != '':
-                stdout,stderr = Popen([uname,switch],stdin=PIPE,stdout=PIPE,\
-                    stderr=PIPE,universal_newlines=True).communicate('\n')
-            else:
-                return False, 'uname not found'
-        if self.isGitBash():
-            winpty = self.where_cmd('winpty.exe')
-            uname = self.where_cmd('uname.exe')
-            stdout,stderr = Popen([winpty, uname,switch],stdin=PIPE,stdout=PIPE,\
-                stderr=PIPE,universal_newlines=True).communicate('\n')
-            if stderr.strip().lower() == 'stdin is not a tty':
-                stdout,stderr = Popen([uname,switch],stdin=PIPE,stdout=PIPE,\
-                    stderr=PIPE,universal_newlines=True).communicate('\n')
-        elif self.isCmd():
-            stdout,stderr = Popen([self.shellCmd(),'/c',command],stdin=PIPE,stdout=PIPE,\
-                stderr=PIPE,universal_newlines=True).communicate('\n')
-        else:
-            # Assume /bin/sh as default shell
-            uname = self.which_cmd('uname')
-            if uname != '':
-                stdout,stderr = Popen([uname,switch],stdin=PIPE,stdout=PIPE,\
-                    stderr=PIPE,universal_newlines=True).communicate('\n')
-            else:
-                return False, 'uname not found'
-        if stderr != "" and not ignoreErr:
-            self.msg_error(command, stderr)
-            return False, stderr
-        else:
-            return True, stdout
-
-    def uname_a(self, ignoreErr=True):
-        return self.uname('-a')
-
-    def uname_m(self, ignoreErr=True):
-        return self.uname('-m')
-
-class AppMsg(OS):
-
-    def msg_alpine_detected(self, title="OPERATION SYSTEM"):
-        self.infoMsg("Alpine Detected!", title)
-
-    def msg_both_local_global(self, title="INSTALLED TWICE"):
-        self.criticalMsg("It may causes error if you have installed both local version and Global Version!\n  Please uninstall local version by,\n    %s uninstall" % self.appPath(), title)
-
-    def msg_download_error(self, file):
-        if not hasattr(self,'__msgshown_download_error__'):
-            self.criticalMsg("Download file error: %s" % file, "DOWNLOAD ERROR")
-            self.__msgshown_download_error__=True
-
-    def msg_download_url_error(self, url, code):
-        if not hasattr(self,'__msgshown_download_error__'):
-            self.criticalMsg("Url: %s\n  HTTP code: %s" % (url, code), "DOWNLOAD ERROR")
-            self.__msgshown_download_error__=True
-
-    def msg_download_not_found(self, file):
-        self.criticalMsg("Downloaded File: %s" % file, "NOT FOUND")
-
-    def msg_downloaded(self, fname="", title="DOWNLOADED"):
-        self.safeMsg("File downloaded to: %s" % fname, title)
-
-    def msg_downloading(self, url="", title="DOWNLOAD FILES"):
-        self.infoMsg("Downloading: %s ..." % url, title)
-
-    def msg_error(self, command="", stderr="", title="ERROR"):
-        self.criticalMsg("Error in %s: %s" % (command, stderr), title)
-
-    def msg_extraction_error(self, file="", title="DOWNLOAD ERROR"):
-        self.criticalMsg("File Extraction error: %s not found" % file, title)
-
-    def msg_incompatiable_os(self, title="INSTALL"):
-        self.criticalMsg("Using incompatible OS or not able to use sudo", title)
-
-    def msg_installation_failed(self, title="INSTALLATION"):
-        self.criticalMsg("Installation failed!", title)
-
-    def msg_global_already(self, title="SELF INSTALL"):
-        self.infoMsg("Global Installation installed already!", title)
-
-    def msg_global_failed(self, title="SELF UNINSTALL"):
-        self.criticalMsg("Global uninstall failed!", title)
-
-    def msg_info(self, usage=None):
-        if usage is None:
-            usage=self.usage()
-        if self.isCmd():
-            msg1="%s.bat (%s.%s) by %s on %s" % (self.appName(),self.majorVersion(),\
-                self.minorVersion(),self.author(),self.lastUpdate())
-        else:
-            msg1="%s (%s.%s) by %s on %s" % (self.appName(),self.majorVersion(),\
-                self.minorVersion(),self.author(),self.lastUpdate())
-        if self.isGlobal():
-            app = "You are using the GLOBAL INSTALLED version, location:"
-        elif self.is_local():
-            app = "You are using the LOCAL INSTALLED version, location:"
-        else :
-            app = "You are using an UNINSTALLED version, location:" 
-        python_exe = self.executable()
-        if python_exe == '':
-            python_exe = self.pythonName()
-        msg = [
-            msg1, 
-            '',
-            '%s' % app,
-            '    %s' % self.selfLocation(),
-            '', 
-            "Basic Usage:",
-            "    %s" % usage,
-            '',
-            'Please visit our homepage: ',
-            '    "%s"' % self.homepage(),
-            '',
-            'Installation command:',
-            '    curl -fsSL %s | %s' % (self.downloadUrl(), python_exe),
-            ''
-        ]
-        starLine=[]
-        space=[]
-        spaces=[[],[],[],[],[],[],[],[],[],[],[],[],[],[]]
-        if self.targetApp() != '':
-            spaces.append([])
-            spaces.append([])
-            msg.append('Target Application:')
-            if self.isCmd() or self.isGitBash():
-                file3 = self.localTargetInstallPath()
-                if self.pathexists(file3):
-                    msg.append('    %s' % file3)
-                    spaces.append([])
-            else:
-                file1 = "%s/%s" % (self.globalFolder(0), self.targetApp())
-                file2 = "%s/%s" % (self.globalFolder(1), self.targetApp())
-                file3 = self.localTargetInstallPath()
-                if self.pathexists(file1):
-                    msg.append('    %s' % file1)
-                    spaces.append([])
-                if self.pathexists(file2):
-                    msg.append('    %s' % file2)
-                    spaces.append([])
-                if self.pathexists(file3):
-                    msg.append('    %s' % file3)
-                    spaces.append([])
-            msg.append('')
-        maxLen=len(msg[0])
-        if self.downloadUrl() == '':
-            if self.homepage() == '':
-                max_line = len(spaces) - 3
-            else:
-                max_line = len(spaces) - 2
-        else:
-            max_line = len(spaces) - 1
-        for n in range(1, max_line):
-            if len(msg[n]) > maxLen :
-                maxLen=len(msg[n])
-        for n in range(0, max_line):
-            for i in range(1,maxLen - len(msg[n]) + 1):
-                spaces[n].append(' ')
-            msg[n]=msg[n] + ''.join(spaces[n])
-        for i in range(1,maxLen + 5):
-            starLine.append("*")
-        for i in range(1,maxLen + 1):
-            space.append(" ")
-        self.prn(''.join(starLine))
-        self.prn('* %s *' % ''.join(space))
-        for n in range(0, max_line):
-            self.prn('* %s *' % msg[n])
-        self.prn('* %s *' % ''.join(space))
-        self.prn(''.join(starLine))
-
-    def msg_install_app_global(self, title="INSTALL"):
-        if self.isCmd() or self.isGitBash():
-            self.msg_install(location='Globally', app="%s.bat" % self.appName(), title=title)
-        else:
-            self.msg_install(location='Globally', app=self.appName(), title=title)
-
-    def msg_install_app_local(self, title="INSTALL"):
-        if self.isCmd() or self.isGitBash():
-            self.msg_install(location='Locally', app="%s.bat" % self.appName(), title=title)
-        else:
-            self.msg_install(location='Locally', app=self.appName(), title=title)
-
-    def msg_install(self, location="", app="", title="INSTALL"):
-        startSh =  ""   # for ash, cmd, gitbash
-        if location == 'Locally':
-            if self.osVersion() == 'macOS':
-                startSh = "  Please type 'hash -r' and 'source ~/.zshenv' to refresh zsh shell hash!\n  Then, you can "
-            elif self.shellCmd() != '/bin/ash' and self.isLinuxShell():
-                startSh =  "  Please type 'hash -r' and 'source ~/.bashrc' to refresh bash shell hash!\n  Then, you can "
-            self.safeMsg("Installed %s! \n%s  type '%s' to run!" % (location, startSh, app), title)
-        else:
-            self.safeMsg("Installed %s! \n    type '%s' to run!" % (location, app), title)
-
-    def msg_install_target_global(self, title="INSTALL"):
-        if self.isCmd() or self.isGitBash():
-            self.msg_install(location='Globally', app="%s.exe" % self.targetApp(), title=title)
-        else:
-            self.msg_install(location='Globally', app=self.targetApp(), title=title)
-
-    def msg_install_target_local(self, title="INSTALL"):
-        if self.isCmd() or self.isGitBash():
-            self.msg_install(location='Locally', app="%s.exe" % self.targetApp(), title=title)
-        else:
-            self.msg_install(location='Locally', app=self.targetApp(), title=title)
-
-    def msg_latest(self, title="CHECK VERSION"):
-        if self.is_local():
-            self.msg_latest_global(title)
-        elif self.is_local():
-            self.msg_latest_local(title)
-        else:
-            self.infoMsg("You are using latest (%s.%s) already!" % (self.majorVersion(),self.minorVersion()), title)
-
-    def msg_latest_global(self, title="CHECK VERSION"):
-        self.infoMsg("You are using latest (%s.%s) Global Installation's copy already!" % (self.majorVersion(),self.minorVersion()), title)
-
-    def msg_latest_local(self, title="CHECK VERSION"):
-        self.infoMsg("You are using latest (%s.%s) Local Installation's copy already!" % (self.majorVersion(),self.minorVersion()), title)
-
-    def msg_latest_available(self, title="CHECK UPDATE"):
-        self.infoMsg("Latest Version = %s\n  Update is available" % self.latest_version(), title)
-
-    def msg_linux_only(self):
-        self.criticalMsg("This programs required linux only.", "LINUX ONLY")
-
-    def msg_local_already(self, title="SELF INSTALL"):
-        self.infoMsg("Local Installation installed already!", title)
-
-    def msg_no_global(self, title="GLOBAL UNINSTALL"):
-        self.infoMsg("You don't have any local installation.", title)
-
-    def msg_no_local(self, title="LOCAL UNINSTALL"):
-        self.infoMsg("You don't have any local installation.", title)
-
-    def msg_no_server(self, title="CONNECTION FAILED"):
-        self.criticalMsg("Cannot communicate with server", title)
-
-    def msg_no_installation(self, title="UNINSTALL"):
-        self.infoMsg("You don't have any global or local installation.", title)
-
-    def msg_not_compatible_os(self, title="INSTALL"):
-        self.infoMsg("Your OS is not compatible: %s" % self.osVersion(), title)
-
-    def msg_not_working_docker(self, title="SYSTEM DAEMON"):
-        self.criticalMsg("systemctl or journalctl cannot work properly in docker container.", title)
-
-    def msg_root_continue(self, title="SELF INSTALL"):
-        self.infoMsg("You must be root or sudo to continue installation!", title)
-
-    def msg_old_global(self, title="SELF INSTALL"):
-        self.infoMsg("You are using an old (%s.%s) Global Installation's copy already!" % (self.majorVersion(),self.minorVersion()), title)
-
-    def msg_old_local(self, title="SELF INSTALL"):
-        self.infoMsg("You are using an old (%s.%s) Local Installation's copy already!" % (self.majorVersion(),self.minorVersion()), title)
-
-    def msg_permission_denied(self, path="", title=""):
-        self.criticalMsg("Permission denied: %s" % path, title)
-
-    def msg_sudo(self, title="SUDO TEST"):
-        if not hasattr(self,'__msg_sudo_verified__'):
-            self.__msg_sudo_verified__ = True
-            self.infoMsg("Your sudo privilege has been verified.", title)
-
-    def msg_sudo_not_installed(self, title="SUDO TEST"):
-        if not hasattr(self,'__msg_sudo_not_installed__'):
-            self.__msg_sudo_not_installed__ = True
-            self.infoMsg("'SUDO' has not installed in your system.", title)
-            if self.osVersion().startswith("Alpine"):
-                self.safeMsg("Please use the following command to install sudo:\n    apk add sudo", title)
-
-    def msg_sudo_failed(self, title="SUDO FAILED"):
-        self.criticalMsg("You should be root or sudo to install globally.", title)
-
-    def msg_system_check(self, title="START"):
-        # msg_system_check(), this message only shown when downloading files
-        if not hasattr(self,'__system_msg_shown__'):
-            self.safeMsg("Now checking your operation system!", title)
-            self.prn("    AppBase Version: %s" % AppBase.VERSION)
-            self.prn("    Python: %s" % self.pythonVersion())
-            self.prn("    C Library: %s" % self.libcVersion())
-            self.prn("    Operation System: %s" % self.osVersion())
-            self.prn("    Architecture: %s" % self.arch())
-            self.prn("    Current User: %s" % self.username())
-            self.prn("    Shell: %s" % self.shellCmd())
-            self.prn("    Python Executable: %s" % self.executable())
-            self.prn("    python2 location: %s" % self.python2())
-            self.prn("    python3 location: %s" % self.python3())
-            self.prn("    conda location: %s" % self.which_cmd('conda', default=""))
-            self.prn("    Inside docker container: %s" % self.is_docker_container())
-            self.prn("    Cython String: %s" % self.cythonVersion())
-            self.prn("    Binary Type: %s" % self.binaryVersion() )
-            self.prn("")
-            self.__system_msg_shown__ = True
-
-    def msg_temp_folder_failed(self, folder="", title=""):
-        if not hasattr(self,'__msg_temp_error__'):
-            self.__msg_temp_error__=True
-            self.criticalMsg("Cannot access or create temp folder" % folder, title)
-
-    def msg_timeout(self, file="", title="ERROR"):
-        self.criticalMsg("Time out in downloading %s" % (file), title)
-
-    def msg_too_many_backup(self):
-        self.criticalMsg("Too many backup created.", "BACKUP CREATION FAILED")
-
-    def msg_unintall_global(self, title="GLOBAL UNINSTALL"):
-        self.safeMsg("You have uninstalled successfully.", title)
-
-    def msg_uninstall_global_failed(self, title="UNINSTALL FAILED"):
-        self.criticalMsg("Failed to uninstall globally", title)
-
-    def msg_uninstall_local(self, title="LOCAL UNINSTALL"):
-        self.safeMsg("You have uninstalled successfully.", title)
-
-    def msg_uninstall_local_failed(self, title="UNINSTALL FAILED"):
-        self.criticalMsg("Failed to uninstall locally", title)
-
-    def msg_unintall_need_root(self, title="GLOBAL UNINSTALL"):
-        self.criticalMsg("You should be root or sudo to uninstall globally.", title)
-
-    def msg_unknown_parameter(self, title="UNKNOWN PARAMETER"):
-        self.criticalMsg("Unknown parameter '%s'" % self.cmd(), title)
-
-    def msg_user_found(self, username="", title="CREATING USER"):
-        self.infoMsg("Existing user group: %s found." % username, title)
-
-    def msg_user_group_found(self, usergroup="", title="CREATING GROUP"):
-        self.infoMsg("Existing user: %s found." % usergroup, title)
-
-    def msg_wrong_shell(self, cmd="", title=""):
-        self.infoMsg("You are using wrong shell to execute: '%s'" % cmd)
-
-class Installer(OS):
-
+            super(Installer, self).__init__(this)
+            
     def check_python(self):
         if not hasattr(self, '__python_checked__'):
             self.__python_checked__=True
@@ -1990,7 +2012,6 @@ class Installer(OS):
         if self.python3() == '' and self.python2() == '':
             self.cmd_history("# Both python2 and python3 not found! ")
 
-
     def install_python_package(self, package, sudo=False):
         self.history_install_package(package, currentframe().f_lineno)
         if self.is_ubuntu() and self.os_major_version()>22:
@@ -2153,30 +2174,6 @@ class Installer(OS):
             return self
         else:
             return self.__python3__
-
-    def pythonMajor(self, major=None):
-        if major is not None:
-            self.__python_major__ = major
-            return self
-        elif not hasattr(self, '__python_major__'):
-            self.__python_major__ = 0
-        return self.__python_major__
-
-    def pythonMinor(self, minor=None):
-        if minor is not None:
-            self.__python_minor__ = minor
-            return self
-        elif not hasattr(self, '__python_minor__'):
-            self.__python_minor__ = 0
-        return self.__python_minor__
-
-    def pythonName(self, name=None):
-        if name is not None:
-            self.__python_name__ = name
-            return self
-        elif not hasattr(self, '__python_name__'):
-            self.__python_name__ = 0
-        return self.__python_name__
 
     def cythonVersion(self):
         if not hasattr(self, "__cython_version__"):
@@ -2391,64 +2388,27 @@ class Installer(OS):
         self.cmd_history(cmd)
         self.shell(cmd,ignoreErr=True)
 
-class AppPara(object):
-        
-    def allowInstallLocal(self, installLocal=None):
-        if installLocal is not None:
-            self.__allow_install_local__=installLocal
-            return self
-        elif not hasattr(self,'__allow_install_local__'):
-            self.__allow_install_local__=True
-        return self.__allow_install_local__
+class AppPara(Installer):
 
-    def allowDisplayInfo(self, state=None):
-        if state is not None:
-            self.__allow_display_info__=state
-            return self
-        elif not hasattr(self, '__allow_display_info__'):
-            self.__allow_display_info__=True
-        return  self.__allow_display_info__
+    def __init__(self, this = None):
+        try:
+            super().__init__(this)
+        except:
+            super(AppPara, self).__init__(this)
+        Attr(self, "targetApp", "")
+        Attr(self, "cmd", "")
+        Attr(self, "allowSelfInstall", True)
+        Attr(self, "allowLinuxOnly", False)
+        Attr(self, "allowDisplayInfo", True)
+        Attr(self, "allowInstallLocal", True)
 
-    def allowLinuxOnly(self, state=None):
-        if state is not None:
-            self.__allow_linux_only__=state
-            return self
-        elif not hasattr(self,'__allow_linux_only__'):
-            self.__allow_linux_only__=False
-        return self.__allow_linux_only__
+class Ask(AppData):
 
-    def allowSelfInstall(self, state=None):
-        if state is not None:
-            self.__allow_self_install__=state
-            return self
-        elif not hasattr(self,'__allow_linux_only__'):
-            self.__allow_self_install__=True
-        return self.__allow_self_install__
-
-    def cmd(self, cmd=None):
-        if cmd is not None:
-            self.__cmd__=cmd
-            return self
-        elif not hasattr(self, '__cmd__'):
-            self.__cmd__=False
-        return self.__cmd__
-
-    def targetApp(self, app=None):
-        if app is not None:
-            self.__target_app__=app
-            return self
-        elif not hasattr( self, '__target_app__' ):
-            self.__target_app__=''
-        return self.__target_app__
-
-class FromPipe(object):
-
-    def fromPipe(self):
-        if hasattr(self,"thisFile") and callable(self.thisFile):
-            return self.thisFile() == '<stdin>'
-        return False
-
-class Ask(FromPipe):
+    def __init__(self, this = None):
+        try:
+            super().__init__(this)
+        except:
+            super(Ask, self).__init__(this)
 
     def __ask_number__(self, ask):
         if not hasattr(self, '__regex_number__'):
@@ -2561,11 +2521,17 @@ class Ask(FromPipe):
     def signal_handler(self, sig, frame):
         self.signal(sig)
         if sig == 2:
-            self.prn('\nYou pressed Ctrl+C!\nPress Enter to Leave!')
+            self.prn('\nYou pressed Ctrl+C!\n')
         if sig == 3:
-            self.prn('\nYou pressed Ctrl+\\!')
+            self.prn('\nYou pressed Ctrl+Back Slash!')
 
 class ShellProfile(Shell):
+
+    def __init__(self, this = None):
+        try:
+            super().__init__(this)
+        except:
+            super(ShellProfile, self).__init__(this)
 
     def add_bashprofile_modification(self):
         # Append the modification lines to .bashrc file
@@ -2652,6 +2618,12 @@ class ShellProfile(Shell):
         return os.path.join(self.home(), ".zshenv")
 
 class Curl(Shell):
+
+    def __init__(self, this = None):
+        try:
+            super().__init__(this)
+        except:
+            super(Curl, self).__init__(this)
 
     def curl_cmd(self, url='', file='', switches='-fsSL',  ignoreErr=True):
         stderr = 'Unknown Error'
@@ -2762,7 +2734,13 @@ class Curl(Shell):
         return result
 
 class Temp(AppHistory):
-    # Class Required: CmdHistory, MsgBase, Which, Sh, Shell, AppData, AppHistory
+
+    def __init__(self, this = None):
+        try:
+            super().__init__(this)
+        except:
+            super(Temp, self).__init__(this)
+
     def tempFile(self, appName=None):
         if appName is None:
             appName = self.appName()
@@ -2808,10 +2786,19 @@ class Temp(AppHistory):
         self.msg_temp_folder_failed(folder)
         return ""
 
-class AppBase(Installer, AppPara, Ask, ShellProfile, FromPipe, AppMsg, Curl, Temp):
+class AppBase(AppPara, ShellProfile, Curl, Temp, Ask):
     VERSION="1.13"
-
     __here__ = __file__
+
+    def __init__(self, this = None):
+        try:
+            super().__init__(this)
+        except:
+            super(AppBase, self).__init__(this)
+        if this is not None:
+            self.this(this)
+        else:
+            self.this(__file__)
 
     def __alpine_ask_install_sudo__(self):
         if self.ask_install_sudo():
@@ -3005,26 +2992,6 @@ class AppBase(Installer, AppPara, Ask, ShellProfile, FromPipe, AppMsg, Curl, Tem
                     self.__app_exec__='./' + self.appName()
         return self.__app_exec__
 
-    def appPath(self, path=None):
-        if path is not None:
-            self.__app_path__=path
-            return self
-        elif not hasattr(self,'__app_path__'):
-            self.__app_path__=''
-            if not self.fromPipe() and self.this() != '':
-                appPath = os.path.abspath(self.this())
-                if not appPath.startswith(self.globalFolder(0)) and not appPath.startswith(self.globalFolder(0)) and not appPath.startswith(self.localInstallFolder()):
-                    if self.comparePath(appPath, '%s/%s' % (os.getcwd(),appPath.split("/")[-1])):
-                        self.__app_path__="./%s" % appPath.split("/")[-1]
-                    elif self.comparePath(appPath, self.which()):
-                        self.__app_path__=appPath.split("/")[-1]
-                    else:
-                        self.__app_path__=appPath
-                else:
-                    self.__app_path__=appPath.split("/")[-1]
-        self.__app_path__ = self.__regex_current_path__.sub("/",self.__app_path__)
-        return self.__app_path__
-
     def check_env(self):
         if self.shellCmd() == '/bin/zsh':
             self.history_check_zsh(currentframe().f_lineno)
@@ -3179,12 +3146,6 @@ class AppBase(Installer, AppPara, Ask, ShellProfile, FromPipe, AppMsg, Curl, Tem
                 self.projectPath( path )
                 return True
         return False
-
-    def globalFolder(self, id=1):
-        path = ['/usr/bin','/usr/local/bin']
-        if id>=0 and id<2:
-            return path[id]
-        return ''
 
     def globalInstallPath(self, id=1):
         folder = self.globalFolder(id)
@@ -3383,6 +3344,8 @@ class AppBase(Installer, AppPara, Ask, ShellProfile, FromPipe, AppMsg, Curl, Tem
                 print("1")
                 self.msg_info(usage)
                 return True
+        else:
+            self.prn("AppPath '%s'" % self.appPath())
         if self.allowSelfInstall():
             if self.fromPipe():
                 result = self.download_and_install(verbal=False)
@@ -3393,16 +3356,6 @@ class AppBase(Installer, AppPara, Ask, ShellProfile, FromPipe, AppMsg, Curl, Tem
                     self.msg_installation_failed()
                 return True
         return False
-
-    def pathexists(self, path, use_history=False):
-        if self.isGitBash():
-            path=self.path_to_dos(path)
-        if use_history:
-            if self.isCmd():
-                self.history_dir(path)
-            else:
-                self.history_ls(path)
-        return os.path.exists(path)
 
     def real_path(self, x, curr_path=None):
         if curr_path is None:
@@ -3645,25 +3598,6 @@ class AppBase(Installer, AppPara, Ask, ShellProfile, FromPipe, AppMsg, Curl, Tem
             fname="%s/%s" % (tempFolder, self.targetApp())
         return fname
 
-    def this(self, this = None):
-        if not hasattr(self, '__regex_current_path__'):
-            self.__regex_current_path__ = re.compile(r"/\./")
-        if this is None :
-            if not hasattr(self, '__this__'):
-                self.__this__=self.appPath()
-            return self.__this__
-        else:
-            this = self.__regex_current_path__.sub("/",this)
-            self.__this__ = this
-            return self
-
-    @staticmethod
-    def thisFile():
-        if AppBase.__here__ == "" or AppBase.__here__=="<stdin>":
-            return AppBase.__here__
-        else:
-            return os.path.realpath(AppBase.__here__)
-
     def translateScript(self, source="", target="", useSudo=False):
         tempFolder=self.tempFolder()
         if tempFolder=="":
@@ -3742,13 +3676,33 @@ class AppBase(Installer, AppPara, Ask, ShellProfile, FromPipe, AppMsg, Curl, Tem
             return self
         return "%s [%s]" % (self.appExec(),self.__para__)
 
-    def __init__(self, this = None):
-        if this is not None:
-            self.this(this)
-        else:
-            self.this(__file__)
+class DockerConfig(Shell):
 
-class DockerConfig(object):
+    def __init__(self, this=None):
+        try:
+            super().__init__(this)
+        except:
+            super(DockerConfig, self).__init__(this)
+        self.__init__docker_config__()
+
+    def __init__docker_config__(self):
+        if not hasattr(self, '__docker_config_inited__'):
+            Attr(self, "docker_tag", "")
+            Attr(self, "dockerName", "")
+            Attr(self, "configFile", "")
+            Attr(self, "exposedPort", "")
+            Attr(self, "exposedVolume", "")
+            Attr(self, "externalPort", "")
+            Attr(self, "imagePath", "")
+            Attr(self, "maintainer", "")
+            Attr(self, "maintainerEmail", "")
+            Attr(self, "portMapping", "")
+            Attr(self, "profile", "Default")
+            Attr(self, "projectName", "")
+            Attr(self, "projectPath", "")
+            Attr(self, "targetOS", "alpine:3.16")
+            Attr(self, "testProfile", False)
+            self.__docker_config_inited__ = True
 
     def get_profile_list(self, config):
         profileList = ['Alpine-3.16', 'Alpine-3.17', 'Alpine-3.18', 'Centos-7', 'Centos-8', 'Centos-9', 
@@ -3768,13 +3722,12 @@ class DockerConfig(object):
             choice = ['N/A']
         return choice, index
 
-    def get_all_profile(self):
+    def clean_all_profile(self):
         if self.configFile() == '':
             self.find_config()
         if self.configFile() != '':
             config = configparser.ConfigParser()
             config.read( self.configFile() )
-            self.prn(self.configFile)
             if config.has_section("docker"):
                 try :
                     self.projectName( config.get("docker", "projectName"))
@@ -3785,16 +3738,17 @@ class DockerConfig(object):
                 self.prn("Proifle: NOT FOUND")
                 return False
             for l in self.foundList:
-                self.targetOS(l)
-                self.dockerName("%s-%s" % (self.projectName(), self.targetOS()))
-                dockerPath=self.dockerPath()
-                if dockerPath !="":
-                    if self.is_mac():
-                        result, stdout = self.shell("find %s/src/* -exec /bin/zsh -c 'xattr -c \"{}\"' \\;" % (dockerPath), ignoreErr=True)
-                    self.removeFolder("%s/docker-image" % dockerPath, use_history=True)
-                    self.removeFolder("%s/target" % dockerPath, use_history=True)
-                    self.removeFolder("%s/repo" % dockerPath, use_history=True)
-                    self.prn("Container cleaned: %s" % self.dockerName())
+                if self.signal() != 2:
+                    self.targetOS(l)
+                    self.dockerName("%s-%s" % (self.projectName(), self.targetOS()))
+                    dockerPath=self.dockerPath()
+                    if dockerPath !="":
+                        if self.is_mac():
+                            result, stdout = self.shell("find %s/src/* -exec /bin/zsh -c 'xattr -c \"{}\"' \\;" % (dockerPath), ignoreErr=True)
+                        self.removeFolder("%s/docker-image" % dockerPath, use_history=True)
+                        self.removeFolder("%s/target" % dockerPath, use_history=True)
+                        self.removeFolder("%s/repo" % dockerPath, use_history=True)
+                        self.safeMsg("Container cleaned: %s" % self.dockerName(),"CLEAN ALL")
 
     def get_profile(self, display_list):
         config = configparser.ConfigParser()
@@ -3965,30 +3919,6 @@ class DockerConfig(object):
                 return True
         return False
 
-    def configFile(self, configFile=None):
-        if configFile is not None:
-            self.__configFile__=configFile
-            return self
-        elif not hasattr(self,'__configFile__'):
-            self.__configFile__=''
-        return self.__configFile__
-
-    def docker_tag(self, tag=None):
-        if tag is not None:
-            self.__docker_tag__=tag
-            return self
-        elif not hasattr(self, '__docker_tag__'):
-            self.__docker_tag__=''
-        return self.__docker_tag__
-
-    def dockerName(self, dockerName=None):
-        if dockerName is not None:
-            self.__dockerName__=dockerName
-            return self
-        elif not hasattr(self, '__dockerName__'):
-            self.__dockerName__=''
-        return self.__dockerName__
-
     def dockerPath(self, dockerPath=None):
         if dockerPath is not None:
             self.__dockerPath__=dockerPath
@@ -4020,103 +3950,13 @@ class DockerConfig(object):
                     self.imagePath('%s/docker-image' % self.__dockerPath__)
         return self.__dockerPath__
 
-    def exposedPort(self, exposedPort=None):
-        if exposedPort is not None:
-            self.__exposedPort__=exposedPort
-            return self
-        elif not hasattr(self, '__exposedPort__'):
-            self.__exposedPort__=''
-        return self.__exposedPort__
+class DockerBuild(DockerConfig):
 
-    def exposedVolume(self, exposedVolume=None):
-        if exposedVolume is not None:
-            self.__exposedVolume__=exposedVolume
-            return self
-        elif not hasattr(self, '__exposedVolume__'):
-            self.__exposedVolume__=''
-        return self.__exposedVolume__
-
-    def externalPort(self, externalPort=None):
-        if externalPort is not None:
-            self.__externalPort__=externalPort
-            return self
-        elif not hasattr(self, '__externalPort__'):
-            self.__externalPort__=''
-        return self.__externalPort__
-
-    def imagePath(self, imagePath=None):
-        if imagePath is not None:
-            self.__imagePath__=imagePath
-            return self
-        elif not hasattr(self, '__imagePath__'):
-            self.__imagePath__=''
-        return self.__imagePath__
-
-    def maintainer(self, maintainer=None):
-        if maintainer is not None:
-            self.__maintainer__=re.sub(r"\s+", "", maintainer).lower()
-            return self
-        elif not hasattr(self,'__maintainer__'):
-            self.__maintainer__=''
-        return self.__maintainer__
-
-    def maintainerEmail(self, maintainerEmail=None):
-        if maintainerEmail is not None:
-            self.__maintainerEmail__=maintainerEmail
-            return self
-        elif not hasattr(self, '__maintainerEmail__'):
-            self.__maintainerEmail__=''
-        return self.__maintainerEmail__
-
-    def portMapping(self, portMapping=None):
-        if portMapping is not None:
-            self.__portMapping__=portMapping
-            return self
-        elif not hasattr(self, '__portMapping__'):
-            self.__portMapping__=''
-        return self.__portMapping__
-
-    def profile(self, profile=None):
-        if profile is not None:
-            self.__profile__=profile
-            return profile
-        elif not hasattr(self, '__profile__'):
-            self.__profile__='Default'
-        return self.__profile__
-
-    def projectName(self, projectName=None):
-        if projectName is not None:
-            self.__projectName__=projectName
-            return self
-        elif not hasattr(self,'__projectName__'):
-            self.__projectName__=''
-        return self.__projectName__
-
-    def projectPath(self, projectPath=None):
-        if projectPath is not None:
-            self.__projectPath__=projectPath
-            return self
-        elif not hasattr(self, '__projectPath__'):
-            self.__projectPath__=''
-        return self.__projectPath__
-
-    def targetOS(self, targetOS=None):
-        if targetOS is not None:
-            self.__targetOS__=targetOS
-            return self
-        elif not hasattr(self, '__targetOS__'):
-            self.__targetOS__='alpine:3.16'
-        return self.__targetOS__
-
-    def testProfile(self, testProfile=None):
-        if testProfile is not None:
-            self.__testProfile__=testProfile
-            return self
-        elif not hasattr(self, '__testProfile__'):
-            self.__testProfile__=False
-        return self.__testProfile__
-
-class DockerBuild(object):
+    def __init__(self, this=None):
+        try:
+            super().__init__(this)
+        except:
+            super(DockerBuild, self).__init__(this)
 
     def clean_target_folder(self, path):
         result, stdout = self.shell('rm -rf "%s/target/*"' % path, True)
@@ -4335,7 +4175,79 @@ class DockerBuild(object):
             except:
                 pass
 
-class ContainerBase(object):
+class ImageBase(DockerBuild):
+
+    def __init__(self, this=None):
+        try:
+            super().__init__(this)
+        except:
+            super(ImageBase, self).__init__(this)
+
+    def image_rm_all(self):
+        if self.is_mac() or self.is_window():
+            cmd = "docker image ls"
+        elif self.sudo_test():
+            cmd = "sudo docker image ls"
+        if cmd != '' :
+            result, stdout = self.shell(cmd)
+            self.cmd_history("# ** Docker Command ** ", currentframe().f_lineno)
+            for l in stdout.split('\n'):
+                token = l.split()
+                if len(token) > 3:
+                    if token[2] != "IMAGE":
+                        if self.is_mac() or self.is_window():
+                            cmd = "docker image rm %s" % token[2]
+                        else :
+                            cmd = "sudo docker image rm %s" % token[2]
+                        self.cmd_history(cmd)
+                        result, stdout = self.shell( cmd, ignoreErr=True )
+        else :
+            self.msg_incompatiable_os("CLEAN FAILED")
+
+    def image_clean_unused(self):
+        if self.is_mac() or self.is_window():
+            cmd = "docker image ls"
+        elif self.sudo_test():
+            cmd = "sudo docker image ls"
+        if cmd != '' :
+            result, stdout = self.shell(cmd)
+            for l in stdout.split('\n'):
+                if '<none>' in l:
+                    token = l.split()
+                    if len(token) > 3:
+                        self.cmd_history("# ** Docker Command ** ", currentframe().f_lineno)
+                        if self.is_mac() or self.is_window():
+                            cmd = "docker image rm %s" % token[2]
+                        else :
+                            cmd = "sudo docker image rm %s" % token[2]
+                        self.cmd_history(cmd)
+                        result, stdout = self.shell( cmd, True )
+                        if stdout == "": 
+                            self.infoMsg("docker image %s is being used" % token[2], "CANNOT REMOVE")
+                        else :
+                            print(stdout)
+        else :
+            self.msg_incompatiable_os("CLEAN FAILED")
+
+    def image_ls(self):
+        cmd = ''
+        if self.is_mac() or self.is_window():
+            cmd = "docker image ls" 
+        elif self.sudo_test():
+            cmd = "sudo docker image ls" 
+        if cmd != '' :
+            result, stdout = self.shell(cmd, True)
+            if stdout != '':
+                for l in stdout.split('\n'):
+                    print(l)
+
+class ContainerBase(ImageBase):
+
+    def __init__(self, this=None):
+        try:
+            super().__init__(this)
+        except:
+            super(ContainerBase, self).__init__(this)
 
     def container_attach(self, dockerName, display_history=False):
         if self.is_mac() or self.is_window():
@@ -4562,86 +4474,16 @@ class ContainerBase(object):
                         return True
         return False
 
-class ImageBase(object):
+class DockerMaster(AppBase, ContainerBase):
 
-    def image_rm_all(self):
-        if self.is_mac() or self.is_window():
-            cmd = "docker image ls"
-        elif self.sudo_test():
-            cmd = "sudo docker image ls"
-        if cmd != '' :
-            result, stdout = self.shell(cmd)
-            for l in stdout.split('\n'):
-                token = l.split()
-                if len(token) > 3:
-                    self.cmd_history("# ** Docker Command ** ", currentframe().f_lineno)
-                    if self.is_mac() or self.is_window():
-                        cmd = "docker image rm %s" % token[2]
-                    else :
-                        cmd = "sudo docker image rm %s" % token[2]
-                    self.cmd_history(cmd)
-                    result, stdout = self.shell( cmd, True )
-                    if stdout == "": 
-                        self.infoMsg("docker image %s is being used" % token[2], "CANNOT REMOVE")
-                    else :
-                        print(stdout)
-        else :
-            self.msg_incompatiable_os("CLEAN FAILED")
-
-    def image_clean_unused(self):
-        if self.is_mac() or self.is_window():
-            cmd = "docker image ls"
-        elif self.sudo_test():
-            cmd = "sudo docker image ls"
-        if cmd != '' :
-            result, stdout = self.shell(cmd)
-            for l in stdout.split('\n'):
-                if '<none>' in l:
-                    token = l.split()
-                    if len(token) > 3:
-                        self.cmd_history("# ** Docker Command ** ", currentframe().f_lineno)
-                        if self.is_mac() or self.is_window():
-                            cmd = "docker image rm %s" % token[2]
-                        else :
-                            cmd = "sudo docker image rm %s" % token[2]
-                        self.cmd_history(cmd)
-                        result, stdout = self.shell( cmd, True )
-                        if stdout == "": 
-                            self.infoMsg("docker image %s is being used" % token[2], "CANNOT REMOVE")
-                        else :
-                            print(stdout)
-        else :
-            self.msg_incompatiable_os("CLEAN FAILED")
-
-    def image_ls(self):
-        cmd = ''
-        if self.is_mac() or self.is_window():
-            cmd = "docker image ls" 
-        elif self.sudo_test():
-            cmd = "sudo docker image ls" 
-        if cmd != '' :
-            result, stdout = self.shell(cmd, True)
-            if stdout != '':
-                for l in stdout.split('\n'):
-                    print(l)
-
-class DockerBase(AppBase, DockerConfig, DockerBuild, ContainerBase, ImageBase):
-
-    def component(self, component=None):
-        if component is not None:
-            self.__component__=component
-            return self
-        elif not hasattr(self,'__component__'):
-            self.__component__=''
-        return self.__component__
-
-    def output(self, output=None):
-        if output is not None:
-            self.__output__=output
-            return self
-        elif not hasattr(self, '__output__'):
-            self.__output__=''
-        return self.__output__
+    def __init__(self, this = None):
+        try:
+            super().__init__(this)
+        except:
+            super(DockerMaster, self).__init__(this)
+        self.__init__docker_config__()
+        Attr(self, "component", "")
+        Attr(self, "output", "")
 
     def requisite(self):
         if self.is_debian():
@@ -4715,7 +4557,7 @@ class DockerBase(AppBase, DockerConfig, DockerBuild, ContainerBase, ImageBase):
                         self.image_build(tag)
                     return True
                 elif self.cmd() == "clean-all":
-                    self.get_all_profile()
+                    self.clean_all_profile()
                     return True
                 elif self.cmd() == "clean":
                     result = self.check_config()
@@ -4727,7 +4569,7 @@ class DockerBase(AppBase, DockerConfig, DockerBuild, ContainerBase, ImageBase):
                         else:
                             dockerName = self.dockerName()
                             tag = self.docker_tag()
-                        self.safeMsg('Using profile: "%s". Architecture: "%s". DockerName: "%s".' % (self.profile(),arch, dockerName),'PROFILE')
+                        self.safeMsg('Using profile: "%s". Architecture: "%s". DockerName: "%s".' % (self.profile(),self.arch(), dockerName),'PROFILE')
                     if dockerName !="":
                         self.cmd_history("# ** Remove temporary folder **", currentframe().f_lineno)
                         dockerPath=self.dockerPath()
@@ -4772,7 +4614,7 @@ class DockerBase(AppBase, DockerConfig, DockerBuild, ContainerBase, ImageBase):
                         else:
                             dockerName = self.dockerName()
                             tag = self.docker_tag()
-                        self.safeMsg('Using profile: "%s". Architecture: "%s". DockerName: "%s".' % (self.profile(),arch, dockerName),'PROFILE')
+                        self.safeMsg('Using profile: "%s". Architecture: "%s". DockerName: "%s".' % (self.profile(),self.arch90, dockerName),'PROFILE')
                         self.container_stop(dockerName, display_history=True)
                     return True
                 elif self.cmd() == 'restart':
@@ -4784,7 +4626,7 @@ class DockerBase(AppBase, DockerConfig, DockerBuild, ContainerBase, ImageBase):
                         else:
                             dockerName = self.dockerName()
                             tag = self.docker_tag()
-                        self.safeMsg('Using profile: "%s". Architecture: "%s". DockerName: "%s".' % (self.profile(),arch, dockerName),'PROFILE')
+                        self.safeMsg('Using profile: "%s". Architecture: "%s". DockerName: "%s".' % (self.profile(),self.arch(), dockerName),'PROFILE')
                         self.container_restart(dockerName, display_history=True)
                     return True
                 elif self.cmd() == 'attach':
@@ -4796,7 +4638,7 @@ class DockerBase(AppBase, DockerConfig, DockerBuild, ContainerBase, ImageBase):
                         else:
                             dockerName = self.dockerName()
                             tag = self.docker_tag()
-                        self.safeMsg('Using profile: "%s". Architecture: "%s". DockerName: "%s".' % (self.profile(),arch, dockerName),'PROFILE')
+                        self.safeMsg('Using profile: "%s". Architecture: "%s". DockerName: "%s".' % (self.profile(),self.arch(), dockerName),'PROFILE')
                         if not self.check_container(dockerName):
                             self.container_run(dockerName, tag)
                         self.container_attach(dockerName, display_history=True)
@@ -4859,7 +4701,7 @@ class DockerBase(AppBase, DockerConfig, DockerBuild, ContainerBase, ImageBase):
                                 dockerName = '%s-test' % self.dockerName()
                             else:
                                 dockerName = self.dockerName()
-                            self.safeMsg('Using profile: "%s". Architecture: "%s". DockerName: "%s".' % (self.profile(),arch, dockerName),'PROFILE')
+                            self.safeMsg('Using profile: "%s". Architecture: "%s". DockerName: "%s".' % (self.profile(), self.arch(), dockerName),'PROFILE')
                             self.container_rm(dockerName)
                             self.cmd_history("# ** Remove temporary folder **", currentframe().f_lineno)
                             dockerPath=self.dockerPath()
@@ -4876,7 +4718,7 @@ class DockerBase(AppBase, DockerConfig, DockerBuild, ContainerBase, ImageBase):
                             dockerName = '%s-test' % self.dockerName()
                         else:
                             dockerName = self.dockerName()
-                        self.safeMsg('Using profile: "%s". Architecture: "%s". DockerName: "%s".' % (self.profile(),arch, dockerName),'PROFILE')
+                        self.safeMsg('Using profile: "%s". Architecture: "%s". DockerName: "%s".' % (self.profile(),self.arch(), dockerName),'PROFILE')
                         self.container_start(dockerName)
                     return True
                 elif self.cmd() == 'run':
@@ -4897,6 +4739,7 @@ class DockerBase(AppBase, DockerConfig, DockerBuild, ContainerBase, ImageBase):
                 self.msg_info()
 
 if __name__ == "__main__":
-    app = DockerBase(__file__)
-    app.setInstallation(appName='d-master',author='Cloudgen Wong',homepage="https://github.com/cloudgen2/d-master",downloadUrl="https://dl.leolio.page/d-master",lastUpdate='2024-5-7',majorVersion=17,minorVersion=7)
+    app = DockerMaster(__file__)
+    app.setInstallation(appName='d-master',author='Cloudgen Wong',homepage="https://github.com/cloudgen2/d-master",downloadUrl="https://dl.leolio.page/d-master",lastUpdate='2024-5-10',majorVersion=17,minorVersion=10)
     app.start()
+
