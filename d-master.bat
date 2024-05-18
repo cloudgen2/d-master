@@ -511,6 +511,8 @@ class CmdHistory(MsgBase):
         else:
             if line is not None:
                 end_at = "--line %d--" % line
+            else:
+                end_at = ''
             self.histories("  #    ...( %.3f second )" % self.timeDiff().total_seconds())
             history_list = '\n  '.join(self.histories())
             self.infoMsg("%s\n  # ====== End at %s ...( %.3f second ) %s ======\n" % ( history_list, str(self.tick()),self.timeFinished().total_seconds(), end_at), "COMMAND HISTORY")
@@ -868,7 +870,7 @@ class OS(AppHistory, Reflection):
         return self.__distro__
 
     def osVersion(self):
-        if self.pathexists("/etc/os-release"):
+        if not self.isGitBash() and self.pathexists("/etc/os-release"):
             self.linuxDistro()
         if hasattr(self,'__distro__'):
             return self.__distro__
@@ -882,8 +884,8 @@ class OS(AppHistory, Reflection):
         return self.__distro__
 
     def pathexists(self, path, use_history=False):
-        if self.isGitBash():
-            path=self.path_to_dos(path)
+        if self.isGitBash() or self.isCmd():
+            path = self.path_to_dos(path)
         if use_history:
             if self.isCmd() and self.hasFunc("history_dir"):
                 self.history_dir(path)
@@ -1134,7 +1136,7 @@ class AppMsg(OS):
     def msg_temp_folder_failed(self, folder="", title=""):
         if not hasattr(self,'__msg_temp_error__'):
             self.__msg_temp_error__=True
-            self.criticalMsg("Cannot access or create temp folder" % folder, title)
+            self.criticalMsg("Cannot access or create temp folder: %s" % folder, title)
 
     def msg_timeout(self, file="", title="ERROR"):
         self.criticalMsg("Time out in downloading %s" % (file), title)
@@ -1176,6 +1178,7 @@ class Shell(AppMsg):
             super().__init__(this)
         except:
             super(Shell, self).__init__(this)
+        Attr(self, 'sudo_cmd', self.which_cmd('sudo'))
 
     def chdir(self, path, line_num=None):
         if self.isCmd() or self.isGitBash():
@@ -1250,13 +1253,18 @@ class Shell(AppMsg):
     def cp(self, filePath1="", filePath2="", use_history=True, useSudo=False):
         cmd = ""
         stdout = ""
-        if self.isCmd() or self.isGitBash():
+        if self.isCmd():
             filePath1=self.path_to_dos(filePath1)
             filePath2=self.path_to_dos(filePath2)
-            if "*" in filePath1 or os.path.isdir(filePath1):
-                cmd = 'xcopy %s %s /e /i' % (filePath1,filePath2)
-            else:
-                cmd = 'copy %s %s' % (filePath1,filePath2)
+            if self.isCmd():
+                if "*" in filePath1 or os.path.isdir(filePath1):
+                    cmd = 'xcopy %s %s /e /i' % (filePath1,filePath2)
+                else:
+                    cmd = 'copy %s %s' % (filePath1,filePath2)
+        elif self.isGitBash():
+            filePath1=self.path_to_gitbash(filePath1)
+            filePath2=self.path_to_gitbash(filePath2)
+            cmd = 'cp %s %s' % (filePath1,filePath2)
         else:
             cp = self.which_cmd('cp')
             if useSudo:
@@ -1362,7 +1370,7 @@ class Shell(AppMsg):
 
     def mkdir(self, path, sudo = False):
         if not self.pathexists( path ):
-            if self.osVersion() == 'windows':
+            if self.isCmd():
                 path=self.path_to_dos(path)
                 dir_split = path.split('\\')
                 dirloc = dir_split[0]
@@ -1403,18 +1411,23 @@ class Shell(AppMsg):
         return open(fname, sw)
 
     def removeFile(self, filePath="", use_history=True):
-        if self.isCmd() or self.isGitBash():
+        if self.isCmd():
             filePath=self.path_to_dos(filePath)
+        elif self.isGitBash():
+            filePath=self.path_to_gitbash(filePath)
         if self.pathexists(filePath):
-            if use_history:
-                if self.isCmd():
-                    filePath=self.path_to_dos(filePath)
-                    cmd = 'del %s' % filePath
-                else:
-                    rm = self.which_cmd('rm')
-                    cmd = '%s %s' % (rm,filePath)                
+            if self.isCmd():
+                filePath=self.path_to_dos(filePath)
+                cmd = 'del %s' % filePath
+            else:
+                rm = self.which_cmd('rm')
+                cmd = '%s %s' % (rm,filePath)
+            if use_history:              
                 self.cmd_history(cmd)
-            os.remove(filePath)
+            if self.isCmd():
+                os.remove(filePath)
+            else:
+                self.shell([rm,filePath])
 
     def removeGlobalInstaller(self):
         file1 = self.globalInstallPath(0)
@@ -1503,7 +1516,7 @@ class Shell(AppMsg):
         if isinstance(command, basestring):
             pipe_array.append(command)
         elif isinstance(command, list):
-            if self.isCmd():
+            if self.isCmd() or self.isGitBash():
                 for cmdlet in command:
                     pipe_array.append(cmdlet)
             else:
@@ -1566,14 +1579,6 @@ class Shell(AppMsg):
                     result, stdout = self.shell(cmd)
                     return result
         return False
-
-    def sudo_cmd(self):
-        if not hasattr(self,'__sudo_cmd__'):
-            if self.is_linux():
-                self.__sudo_cmd__=self.which_cmd('sudo')
-            else:
-                self.__sudo_cmd__=""
-        return self.__sudo_cmd__
 
     def sudo_test(self,msg='.'):
         if self.sudo_cmd() == "":
@@ -1668,13 +1673,16 @@ class Shell(AppMsg):
 
     def which_cmd(self, cmd, default=""):
         stdout = ''
-        origin_cmd = cmd
+        original_cmd = cmd
         if "/" in cmd:
             cmd= cmd.split("/")[-1]
         if "\\" in cmd:
             cmd= cmd.split("\\")[-1]
-        if self.isCmd() or self.isGitBash():
+        if self.isCmd():
             return self.where_cmd(cmd)
+        elif self.isGitBash():
+            result, stdout = self.shell(["/usr/bin/which", cmd], ignoreErr=True)
+            return stdout.strip()
         elif self.isLinuxShell():
             if os.path.exists('/usr/bin/which'):
                 result, stdout = self.shell(["/usr/bin/which", cmd], ignoreErr=True)
@@ -1699,27 +1707,41 @@ class Shell(AppMsg):
                 for pathlet in split_path:
                     if os.path.exists('%s/%s' % (pathlet, cmd)):
                         return '%s/%s' % (pathlet, cmd)
-        if cmd==origin_cmd:
+        if cmd==original_cmd:
             cmd=default
         return cmd
 
     def where_cmd(self, cmd, default=""):
         stdout = ''
-        origin_cmd = cmd
+        if len(cmd) > 4:
+            if '.' not in cmd and cmd[-4:] != '.exe':
+                cmd = cmd + '.exe'
+        elif '.' not in cmd:
+            cmd = cmd + '.exe'
+        original_cmd = cmd
+        if "/" in cmd:
+            cmd= cmd.split("/")[-1]
+        if "\\" in cmd:
+            cmd= cmd.split("\\")[-1]
         if self.isLinuxShell():
             return self.which_cmd(cmd)
-        elif self.isCmd()  or self.isGitBash():
-            path = "C:\\Users\\%s\\AppData\\Local\\Microsoft\\WindowsApps\\%s" % (self.username(), cmd)
-            if os.path.exists('C:\\Windows\\system32\\%s' % cmd):
-                return 'C:\\Windows\\system32\\%s' % cmd
-            elif os.path.exists(path):
-                return path
-            elif 'PATH' in os.environ:
-                split_path = os.environ['PATH'].split(';')
-                for pathlet in split_path:
-                    if os.path.exists('%s\\%s' % (pathlet, cmd)):
-                        return '%s\\%s' % (pathlet, cmd)
-        if cmd==origin_cmd:
+        path = "C:\\Users\\%s\\AppData\\Local\\Microsoft\\WindowsApps\\%s" % (self.username(), original_cmd)
+        if os.path.exists(path):
+            cmd = path
+        elif os.path.exists('C:\\Windows\\system32\\%s' % original_cmd):
+            cmd = 'C:\\Windows\\system32\\%s' % original_cmd
+        elif os.path.exists('C:\\Program Files\\Git\\usr\\bin\\%s' % original_cmd):
+            cmd = 'C:\\Program Files\\Git\\usr\\bin\\%s' % original_cmd
+        elif 'PATH' in os.environ:
+            split_path = os.environ['PATH'].split(';')
+            for pathlet in split_path:
+                if os.path.exists('%s\\%s' % (pathlet, original_cmd)):
+                    cmd =  '%s\\%s' % (pathlet, original_cmd)
+                    break
+        if cmd==original_cmd and original_cmd != 'winpty.exe':
+            result, stdout = self.shell("where %s" % cmd, ignoreErr=True)
+            cmd == stdout.strip()
+        if cmd==original_cmd:
             cmd=default
         return cmd
 
@@ -1756,14 +1778,20 @@ class Installer(Shell):
     def check_python(self):
         if not self.pyChecked():
             self.cmd_history("# ** Checking python version  **",currentframe().f_lineno)
-            python2 = self.which_cmd("python2",default="")
-            python3 = self.which_cmd("python3",default="")
+            if self.is_window():
+                python2 = self.where_cmd("python2.exe",default="")
+                python3 = self.where_cmd("python3.exe",default="")
+            else:
+                python2 = self.which_cmd("python2",default="")
+                python3 = self.which_cmd("python3",default="")
             arch = 'x86_64'
             if self.arch() == 'amd64':
                 arch = 'x86_64'
             if python2 == '' or python3 == '':
                 python = self.which_cmd("python")
                 if python != "":
+                    if self.isGitBash():
+                        python = self.path_to_gitbash(python)
                     result , stdout = self.shell([python,"--version"])
                     if result:
                         id_array = stdout.strip().split(' ')
@@ -1778,14 +1806,28 @@ class Installer(Shell):
                                 self.cythonString("cpython-%s%s-darwin" % (version_array[0], version_array[1]))
                             else:
                                 self.cythonString("cpython-%s%s-%s-linux-gnu" % (version_array[0], version_array[1], arch))
-            self.python2( python2 )
-            self.python3( python3 )
+            if self.isGitBash():
+                self.python2( self.path_to_gitbash(python2) )
+                self.python3( self.path_to_gitbash(python3) )
+            else:
+                self.python2( python2 )
+                self.python3( python3 )
             if python2!="" and not self.py2Found():
                 self.py2Found( True )
-                self.cmd_history("  # python2 found: %s" % self.python2())
+                self.cmd_history("  # python2 found: %s" % python2)
             if python3!="" and  not self.py3Found():
                 self.py3Found( True )
-                self.cmd_history("  # python3 found: %s" % self.python3())
+                self.cmd_history("  # python3 found: %s" % python3)
+            if self.python2() != "":
+                result , stdout = self.shell("%s --version" % self.python2())
+                if result:
+                    id_array = stdout.strip().split(' ')
+                    if len(id_array) > 1:
+                        version_array = id_array[1].split(".")
+                        if self.is_mac():
+                            self.cythonString("cpython-%s%s-darwin" % (version_array[0], version_array[1]))
+                        else:
+                            self.cythonString("cpython-%s%s-%s-linux-gnu" % (version_array[0], version_array[1], arch))
             if self.python3() != "":
                 result , stdout = self.shell("%s --version" % self.python3())
                 if result:
@@ -2797,21 +2839,24 @@ class Temp(AppHistory):
             super().__init__(this)
         except:
             super(Temp, self).__init__(this)
+        # Should call setInstallation before __init_temp__()
+        # self.__init_temp__()
 
-    def tempFile(self, appName=None):
-        if appName is None:
-            appName = self.appName()
+    def __init_temp__(self):
+        Attr(self, "tempFile", "")
+        appName = self.appName()
         tempFolder=self.tempFolder()
         if tempFolder=="":
-            return ""
+            return False
         if self.isCmd():
             fname="%s\\%s-%s.bat" % (tempFolder, appName,self.timestamp())
         elif self.isGitBash():
             # GitBash download location should remain the same such that starting with /c/Users/user...
-            fname="%s/%s-%s.bat" % (tempFolder, appName,self.timestamp())
+            fname="%s\\%s-%s.bat" % (tempFolder, appName,self.timestamp())
         else:
             fname="%s/%s-%s" % (tempFolder, appName,self.timestamp())
-        return fname
+        self.tempFile(fname)
+        return True
 
     def tempFolder(self):
         if not hasattr(self,'__temp_checked__'):
@@ -2821,7 +2866,7 @@ class Temp(AppHistory):
             # in windows, most likely
             folder=os.environ["TEMP"]
         elif self.isGitBash():
-            folder="/C/Users/%s/AppData/Local/Temp" % self.username()
+            folder="/tmp" 
         elif self.isCmd():
             folder="C:\\Users\\%s\\AppData\\Local\\Temp" % self.username()
         elif self.osVersion() == 'macOS':
@@ -2830,18 +2875,22 @@ class Temp(AppHistory):
             folder="/tmp" 
         else:
             folder="/home/%s/.local/temp" % self.username()
-        if self.__temp_checked__<1:
-            if not self.mkdir(folder):
-                return ""
-        if self.__temp_checked__==0:
-            use_history=True
+        if not self.isGitBash():
+            if self.__temp_checked__<1:
+                if self.pathexists(folder):
+                    if not self.mkdir(folder):
+                        return ""
+            if self.__temp_checked__==0:
+                use_history=True
+            else:
+                use_history=False
+            self.__temp_checked__=self.__temp_checked__+1
+            if self.pathexists(folder, use_history=use_history):
+                return folder
+            self.msg_temp_folder_failed(folder)
+            return ""
         else:
-            use_history=False
-        self.__temp_checked__=self.__temp_checked__+1
-        if self.pathexists(folder, use_history=use_history):
             return folder
-        self.msg_temp_folder_failed(folder)
-        return ""
 
 class AppBase(AppPara, ShellProfile, Curl, Temp, Ask):
     VERSION="1.14"
@@ -2857,7 +2906,7 @@ class AppBase(AppPara, ShellProfile, Curl, Temp, Ask):
             self.this(__file__)
         Attr(self, "subCmd", ["check-system","check-update","check-version","cython-string","download",
             "download-app","download-target-app","global-installation-path","help","install",
-            "local-installation-path","this","this-file","timestamp","today","update"])
+            "local-installation-path","this","this-file","timestamp","today","update","where","which"])
 
     def __alpine_ask_install_sudo__(self):
         if self.ask_install_sudo():
@@ -3077,7 +3126,7 @@ class AppBase(AppPara, ShellProfile, Curl, Temp, Ask):
         elif self.latest_version() != '0.0':
             self.msg_latest()
 
-    def download_to_temp(self, url=None, file=None,verbal = False):
+    def download_to_temp(self, url=None, file=None, verbal = False):
         # msg_system_check(), this message only shown when downloading files
         if self.tempFolder() == "":
             return False
@@ -3112,32 +3161,35 @@ class AppBase(AppPara, ShellProfile, Curl, Temp, Ask):
                 if not self.install(this=fname, verbal=False):
                     return False
                 if verbal:
-                    self.cmd_history_print(currentframe().f_lineno)
-                if result and verbal:
-                    if self.targetApp() != '':
-                        if self.username() == 'root':
-                            self.msg_install_target_global()
+                    if result:
+                        if self.targetApp() != '':
+                            if self.username() == 'root':
+                                self.msg_install_target_global()
+                            else:
+                                self.msg_install_target_local()
                         else:
-                            self.msg_install_target_local()
+                            if self.username() == 'root':
+                                self.msg_install_app_global()
+                            else:
+                                self.msg_install_app_local()
                     else:
-                        if self.username() == 'root':
-                            self.msg_install_app_global()
-                        else:
-                            self.msg_install_app_local()
+                        self.cmd_history_print(currentframe().f_lineno)
                 return result
             else:
                 self.msg_download_not_found(fname)
+        else:
+            self.msg_installation_failed()
         return False
 
     def download_get_install_pip(self):
-        fname = self.tempFile('get-pip')
-        self.download_to_temp("https://bootstrap.pypa.io/get-pip.py", file=fname, verbal=False)
-        cmd="%s %s" % (self.executable(),fname)
+        self.tempFile('get-pip')
+        self.download_to_temp("https://bootstrap.pypa.io/get-pip.py", file=self.tempFile(), verbal=False)
+        cmd="%s %s" % (self.executable(),self.tempFile())
         if (not self.is_mac() and self.is_linux()) and not self.root_or_sudo():
-            cmd="sudo %s %s" % (self.executable(),fname)
-        self.cmd_history("# ** install pip by get-pip.py **")
+            cmd="sudo %s %s" % (self.executable(),self.tempFile())
+        self.cmd_history("# ** install pip by get-pip.py **", currentframe().f_lineno)
         self.cmd_history(cmd)
-        self.shell(cmd)
+        self.shell(cmd,ignoreErr=True)
 
     def download_and_install_target(self):
         tempFolder = self.tempFolder()
@@ -3339,6 +3391,18 @@ class AppBase(AppPara, ShellProfile, Curl, Temp, Ask):
                     result = result + '\\' + pathlet
         return result
 
+    def path_to_gitbash(self, path):
+        # Avoid doing any os.path.realpath conversion
+        split_path=path.replace("/","\\").split('\\')
+        count=0
+        result=''
+        for pathlet in split_path:
+            if pathlet!= '':
+                if pathlet[-1] == ':':
+                    pathlet=pathlet[:-1]
+                result = result + '/' + pathlet
+        return result
+
     def parseArgs(self, usage=None):
         if usage is None:
             usage = self.usage()
@@ -3348,12 +3412,22 @@ class AppBase(AppPara, ShellProfile, Curl, Temp, Ask):
                 if self.cmd()== "help": 
                     self.help()
                     return True
+                elif self.cmd()== "where" and len(sys.argv) > 2:
+                    self.cmd_history("# ** where %s **" % sys.argv[2],currentframe().f_lineno)
+                    self.cmd_history_print(currentframe().f_lineno)
+                    self.prn(self.where_cmd(sys.argv[2]))
+                    return True
+                elif self.cmd()== "which" and len(sys.argv) > 2:
+                    self.cmd_history("# ** which %s **" % sys.argv[2],currentframe().f_lineno)
+                    self.cmd_history_print(currentframe().f_lineno)
+                    self.prn(self.which_cmd(sys.argv[2]))
+                    return True
                 elif self.cmd() == "self-install" or self.cmd() == "install" or self.cmd() == "update":
                     self.start_install()
                     self.cmd_history_print()
                     return True
                 elif self.cmd() == "cython-string":
-                    self.prn(self.cythonVersion()) 
+                    self.prn(self.cythonString()) 
                     return True
                 elif self.cmd() == "check-system":
                     self.msg_system_check()
@@ -3396,23 +3470,15 @@ class AppBase(AppPara, ShellProfile, Curl, Temp, Ask):
                     self.check_update()
                     return True
                 elif self.allowDisplayInfo():
-                    print("2")
                     self.msg_info(usage)
                     return True
             elif self.allowDisplayInfo():
-                print("1")
                 self.msg_info(usage)
-                return True
-        else:
-            self.prn("AppPath '%s'" % self.appPath())
         if self.allowSelfInstall():
             if self.fromPipe():
-                result = self.download_and_install(verbal=False)
+                result = self.download_and_install(verbal=True)
                 if self.hasFunc("requisite"):
                     self.requisite()
-                self.cmd_history_print(currentframe().f_lineno)
-                if not result:
-                    self.msg_installation_failed()
                 return True
         return False
 
@@ -3609,6 +3675,7 @@ class AppBase(AppPara, ShellProfile, Curl, Temp, Ask):
             .lastUpdate( lastUpdate ) \
             .majorVersion( majorVersion ) \
             .minorVersion( minorVersion )
+        self.__init_temp__()
 
     def start_install(self):
         if self.hasFunc("requisite"):
